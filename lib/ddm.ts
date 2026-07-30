@@ -19,8 +19,10 @@ export const DDM_SETTINGS = {
   boundary: 1,
   start: 0.5,
   noise: 1,
-  nonDecisionMs: 100,
-  responseWindowMs: 1200,
+  // 500 ms enforced response delay after stimulus offset + 100 ms fixed residual time.
+  nonDecisionMs: 600,
+  // Response deadline measured from stimulus offset: 500 ms delay + 1200 ms response window.
+  responseWindowMs: 1700,
 } as const;
 
 const GRID_STEP = 0.05;
