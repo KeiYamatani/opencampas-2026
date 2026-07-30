@@ -9,7 +9,7 @@ const ANALYSIS_HREF = BASE_PATH + "/analysis";
 const PARTICIPANT_URL = process.env.NEXT_PUBLIC_PARTICIPANT_URL ?? "https://keiyamatani.github.io/opencampas-2026/";
 const QR_IMAGE_URL = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&format=svg&margin=0&data=" + encodeURIComponent(PARTICIPANT_URL);
 
-type Phase = "intro" | "prediction" | "roundIntro" | "countdown" | "waiting" | "stimulus" | "response" | "feedback" | "roundComplete" | "results";
+type Phase = "intro" | "prediction" | "roundIntro" | "countdown" | "waiting" | "cue" | "stimulus" | "response" | "feedback" | "roundComplete" | "results";
 type RoundId = "a" | "b";
 type Block = "practice" | "main";
 type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
@@ -23,6 +23,8 @@ type Trial = {
   correctAction: "press" | "no_go";
   response: "press" | null;
   outcome: Outcome;
+  cueOnset: number;
+  cueOffset: number;
   stimulusOnset: number;
   stimulusOffset: number;
   responseTimestamp: number | null;
@@ -48,6 +50,7 @@ type AggregateRecord = {
 
 const PRACTICE_TOTAL = 4;
 const MAIN_TOTAL = 14;
+const CUE_DURATION = 500;
 const RESPONSE_WINDOW = 1200;
 const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v2";
 const ROUNDS = {
@@ -173,6 +176,8 @@ export default function Home() {
   const [participant, setParticipant] = useState("");
   const [aggregateRecords, setAggregateRecords] = useState<AggregateRecord[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cueOnsetRef = useRef<number | null>(null);
+  const cueOffsetRef = useRef<number | null>(null);
   const stimulusOnsetRef = useRef<number | null>(null);
   const stimulusOffsetRef = useRef<number | null>(null);
   const lockedRef = useRef(false);
@@ -206,6 +211,8 @@ export default function Home() {
     const planned = plan[trialIndex];
     const roundConfig = ROUNDS[planned.round];
     const responseTimestamp = responded ? nowTimestamp() : null;
+    const cueOnset = cueOnsetRef.current ?? nowTimestamp();
+    const cueOffset = cueOffsetRef.current ?? cueOnset + CUE_DURATION;
     const stimulusOnset = stimulusOnsetRef.current ?? nowTimestamp();
     const stimulusOffset = stimulusOffsetRef.current ?? nowTimestamp();
     const trialType = planned.duration === roundConfig.long ? "go" : "no_go";
@@ -221,6 +228,8 @@ export default function Home() {
       correctAction: trialType === "go" ? "press" : "no_go",
       response: responded ? "press" : null,
       outcome,
+      cueOnset,
+      cueOffset,
       stimulusOnset,
       stimulusOffset,
       responseTimestamp,
@@ -242,6 +251,12 @@ export default function Home() {
     }, 650);
   }, [beep, clearTimer, plan, trialIndex]);
 
+  const beginCue = useCallback(() => {
+    cueOnsetRef.current = nowTimestamp();
+    cueOffsetRef.current = null;
+    setPhase("cue");
+  }, []);
+
   const beginStimulus = useCallback(() => {
     stimulusOnsetRef.current = nowTimestamp();
     stimulusOffsetRef.current = null;
@@ -256,9 +271,18 @@ export default function Home() {
 
   useEffect(() => {
     if (phase !== "waiting") return;
-    const waitingTimer = setTimeout(beginStimulus, 650 + Math.floor(Math.random() * 850));
+    const waitingTimer = setTimeout(beginCue, 650 + Math.floor(Math.random() * 850));
     return () => clearTimeout(waitingTimer);
-  }, [beginStimulus, phase, trialIndex]);
+  }, [beginCue, phase, trialIndex]);
+
+  useEffect(() => {
+    if (phase !== "cue") return;
+    const cueTimer = setTimeout(() => {
+      cueOffsetRef.current = nowTimestamp();
+      beginStimulus();
+    }, CUE_DURATION);
+    return () => clearTimeout(cueTimer);
+  }, [beginStimulus, phase]);
 
   useEffect(() => {
     if (phase !== "countdown") return;
@@ -349,7 +373,7 @@ export default function Home() {
   const exportCsv = () => {
     const header = [
       "participant_id", "round", "comparison", "trial_block", "trial", "stimulus_duration",
-      "trial_type", "correct_action", "response", "outcome", "stimulus_onset", "stimulus_offset",
+      "trial_type", "correct_action", "response", "outcome", "cue_onset", "cue_offset", "stimulus_onset", "stimulus_offset",
       "response_timestamp", "rt_from_onset", "rt_from_offset", "timeout_duration",
     ].join(",") + "\n";
     const rows = trials.map(trial => [
@@ -363,6 +387,8 @@ export default function Home() {
       trial.correctAction,
       trial.response,
       trial.outcome,
+      new Date(trial.cueOnset).toISOString(),
+      new Date(trial.cueOffset).toISOString(),
       new Date(trial.stimulusOnset).toISOString(),
       new Date(trial.stimulusOffset).toISOString(),
       trial.responseTimestamp === null ? null : new Date(trial.responseTimestamp).toISOString(),
@@ -379,7 +405,7 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  const active = ["countdown", "waiting", "stimulus", "response", "feedback"].includes(phase);
+  const active = ["countdown", "waiting", "cue", "stimulus", "response", "feedback"].includes(phase);
   const aggregateA = aggregate(aggregateRecords, "a");
   const aggregateB = aggregate(aggregateRecords, "b");
   const isPracticeComplete = phase === "roundComplete" && currentBlock === "practice";
@@ -418,7 +444,7 @@ export default function Home() {
           <div className="startRow">
             <label><span>参加者ID（任意）</span><input value={participant} onChange={event => setParticipant(event.target.value)} placeholder="例：A12" maxLength={20} /></label>
             <button className="start" onClick={() => setPhase("prediction")}>予想してはじめる <span>→</span></button>
-            <p>各Round：練習 {PRACTICE_TOTAL}試行 → 本試行 {MAIN_TOTAL}試行 ／ 回答は刺激終了後のみ</p>
+            <p><b>次の画面で予想を1つ選びます。</b> 各Round：練習 {PRACTICE_TOTAL}試行 → 本試行 {MAIN_TOTAL}試行 ／ 回答は刺激終了後のみ</p>
           </div>
         </section>
       )}
@@ -432,6 +458,7 @@ export default function Home() {
             <button className={prediction === "a" ? "selected" : ""} onClick={() => setPrediction("a")}><span>問題 A</span><b>0.2 秒 vs 0.8 秒</b><small>時間差：0.6 秒</small></button>
             <button className={prediction === "b" ? "selected" : ""} onClick={() => setPrediction("b")}><span>問題 B</span><b>0.8 秒 vs 1.6 秒</b><small>時間差：0.8 秒</small></button>
           </div>
+          <p className="choicePrompt" aria-live="polite">{prediction ? "選択済みです。Round 1へ進めます。" : "まず問題Aまたは問題Bを1つ選んでください。"}</p>
           <div className="resultActions">
             <button className="secondary" onClick={() => setPhase("intro")}>戻る</button>
             <button className="start" disabled={!prediction} onClick={() => { setCurrentRound("a"); setCurrentBlock("practice"); setPhase("roundIntro"); }}>Round 1へ <span>→</span></button>
@@ -443,7 +470,7 @@ export default function Home() {
         <section className="roundIntro">
           <div className="eyebrow"><span>{config.label.toUpperCase()}</span><i /></div>
           <h1>{config.comparison}<br /><em>{config.role}</em></h1>
-          <p className="lead">刺激が消えたあと、長いと思ったときだけ押してください。短いと思ったときは何もしません。</p>
+          <p className="lead">赤い点が0.5秒表示されたら、次に出る刺激をよく見ます。刺激が消えたあと、長いと思ったときだけ押してください。短いと思ったときは何もしません。</p>
           {currentRound === "b" && <div className="flipNotice">今度は 0.8秒が「短い」です。</div>}
           <div className="roundRule"><span>短い {config.short / 1000}秒 → NO-GO</span><b>長い {config.long / 1000}秒 → SPACE / TAP</b></div>
           <button className="start" onClick={() => beginBlock("practice")}>練習 {PRACTICE_TOTAL}試行をはじめる <span>→</span></button>
@@ -454,15 +481,16 @@ export default function Home() {
         <section className="experiment">
           <div className="progressHead"><span>{config.label.toUpperCase()} / {currentBlock === "practice" ? "PRACTICE" : "MAIN"}</span><b>{String(Math.min(trialIndex + 1, totalForBlock)).padStart(2, "0")} <i>/ {totalForBlock}</i></b></div>
           <div className="progress"><i style={{ width: String((trialIndex / totalForBlock) * 100) + "%" }} /></div>
-          <div className={"stage " + phase} onPointerDown={press}>
+          <div className={"stage " + phase}>
             <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
             {phase === "countdown" && <div className="count"><span>{currentBlock === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
-            {phase === "waiting" && <div className="fixation">+</div>}
+            {phase === "waiting" && <div className="fixation"><b>+</b><span>次の試行を準備中</span></div>}
+            {phase === "cue" && <div className="cue" role="status"><i aria-hidden="true" /><b>赤い点を見て、準備</b><span>0.5秒後に刺激が出ます</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
-            {phase === "response" && <div className="respond"><b>長い？</b><span>長いと思ったときだけ SPACE / TAP</span></div>}
+            {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → 押す</b><span>SPACEキー または このボタン</span></button><small>短いと思ったら、何もしない</small></div>}
             {phase === "feedback" && <div className={"feedback " + (feedback === "正解！" ? "ok" : "ng")}>{feedback}</div>}
           </div>
-          <div className="experimentFoot"><p><b>刺激が消えてから判断</b><br />回答窓は {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</p><button onClick={resetExperiment}>中止する</button></div>
+          <div className="experimentFoot"><p>{phase === "cue" ? <><b>赤い点：準備</b><br />まだ押さないでください。</> : phase === "stimulus" ? <><b>刺激提示中：観察</b><br />刺激が消えるまで、まだ押さないでください。</> : phase === "response" ? <><b>刺激終了：判断</b><br />長いと思ったときだけ、大きいボタンを押してください。</> : <><b>刺激が消えてから判断</b><br />回答窓は {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</>}</p><button onClick={resetExperiment}>中止する</button></div>
         </section>
       )}
 
