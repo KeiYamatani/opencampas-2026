@@ -256,7 +256,7 @@ export default function AnalysisPage() {
               <article><span>0.8 vs 1.6秒</span><b>{formatDrift(fitB.drift)}</b><strong>|v| = {fitB.evidenceStrength.toFixed(2)}</strong><p>近似95%範囲：{formatDrift(fitB.intervalLow)} ～ {formatDrift(fitB.intervalHigh)}</p></article>
             </div>
             <p className="fitReadout">{evidenceMessage} <b>|v|</b> が大きいほど、この固定スケールDDMではGo／No-goの証拠が速く分かれることを表します。</p>
-            <details className="modelDetails"><summary>集計DDMの前提を見る</summary><p><code>dx = ±v dt + dW</code>。長い刺激を <code>+v</code>、短い刺激を <code>−v</code> とし、<code>a=1</code>、<code>z=0.5</code>、<code>σ=1</code>、<code>t₀=100 ms</code> を固定しています。No-goは下側境界または回答窓内の未到達を含む打ち切りデータです。異なる参加者の個人差を分けて推定する階層モデルではありません。</p></details>
+            <details className="modelDetails"><summary>集計DDMの前提を見る</summary><p><code>dx = ±v dt + dW</code>。長い刺激を <code>+v</code>、短い刺激を <code>−v</code> とし、<code>a=1</code>、<code>z=0.5</code>、<code>σ=1</code>、<code>t₀=600 ms</code>（回答待機0.5秒を含む）を固定しています。No-goは下側境界または刺激終了後1.7秒までの未到達を含む打ち切りデータです。異なる参加者の個人差を分けて推定する階層モデルではありません。</p></details>
           </section>}
 
           <section className="sessionList">
