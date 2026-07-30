@@ -9,7 +9,7 @@ const ANALYSIS_HREF = BASE_PATH + "/analysis";
 const PARTICIPANT_URL = process.env.NEXT_PUBLIC_PARTICIPANT_URL ?? "https://keiyamatani.github.io/opencampas-2026/";
 const QR_IMAGE_URL = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&format=svg&margin=0&data=" + encodeURIComponent(PARTICIPANT_URL);
 
-type Phase = "intro" | "prediction" | "roundIntro" | "countdown" | "waiting" | "cue" | "stimulus" | "response" | "feedback" | "roundComplete" | "results";
+type Phase = "intro" | "prediction" | "roundIntro" | "countdown" | "waiting" | "cue" | "cueInterval" | "stimulus" | "response" | "feedback" | "roundComplete" | "results";
 type RoundId = "a" | "b";
 type Block = "practice" | "main";
 type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
@@ -51,6 +51,7 @@ type AggregateRecord = {
 const PRACTICE_TOTAL = 4;
 const MAIN_TOTAL = 14;
 const CUE_DURATION = 500;
+const CUE_TO_STIMULUS_INTERVAL = 500;
 const RESPONSE_WINDOW = 1200;
 const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v2";
 const ROUNDS = {
@@ -97,6 +98,14 @@ function median(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+function higherValueClass(value: number, comparison: number) {
+  return value > comparison ? "metricBest" : "";
+}
+
+function lowerValueClass(value: number, comparison: number) {
+  return value < comparison ? "metricBest" : "";
 }
 
 function csvCell(value: string | number | null) {
@@ -279,9 +288,15 @@ export default function Home() {
     if (phase !== "cue") return;
     const cueTimer = setTimeout(() => {
       cueOffsetRef.current = nowTimestamp();
-      beginStimulus();
+      setPhase("cueInterval");
     }, CUE_DURATION);
     return () => clearTimeout(cueTimer);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "cueInterval") return;
+    const intervalTimer = setTimeout(beginStimulus, CUE_TO_STIMULUS_INTERVAL);
+    return () => clearTimeout(intervalTimer);
   }, [beginStimulus, phase]);
 
   useEffect(() => {
@@ -405,7 +420,7 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  const active = ["countdown", "waiting", "cue", "stimulus", "response", "feedback"].includes(phase);
+  const active = ["countdown", "waiting", "cue", "cueInterval", "stimulus", "response", "feedback"].includes(phase);
   const aggregateA = aggregate(aggregateRecords, "a");
   const aggregateB = aggregate(aggregateRecords, "b");
   const isPracticeComplete = phase === "roundComplete" && currentBlock === "practice";
@@ -470,9 +485,10 @@ export default function Home() {
         <section className="roundIntro">
           <div className="eyebrow"><span>{config.label.toUpperCase()}</span><i /></div>
           <h1>{config.comparison}<br /><em>{config.role}</em></h1>
-          <p className="lead">赤い点が0.5秒表示されたら、次に出る刺激をよく見ます。刺激が消えたあと、長いと思ったときだけ押してください。短いと思ったときは何もしません。</p>
+          <p className="lead">赤い点が0.5秒表示されたら、注視点を0.5秒見ます。その後に出る刺激をよく見てください。刺激が消えたあと、長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
           {currentRound === "b" && <div className="flipNotice">今度は 0.8秒が「短い」です。</div>}
           <div className="roundRule"><span>短い {config.short / 1000}秒 → NO-GO</span><b>長い {config.long / 1000}秒 → SPACE / TAP</b></div>
+          <p className="cueSequence"><i /> 赤い点 <b>0.5秒</b>　→　＋ <b>0.5秒</b>　→　刺激</p>
           <button className="start" onClick={() => beginBlock("practice")}>練習 {PRACTICE_TOTAL}試行をはじめる <span>→</span></button>
         </section>
       )}
@@ -485,12 +501,13 @@ export default function Home() {
             <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
             {phase === "countdown" && <div className="count"><span>{currentBlock === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
             {phase === "waiting" && <div className="fixation"><b>+</b><span>次の試行を準備中</span></div>}
-            {phase === "cue" && <div className="cue" role="status"><i aria-hidden="true" /><b>赤い点を見て、準備</b><span>0.5秒後に刺激が出ます</span></div>}
+            {phase === "cue" && <div className="cue" role="status"><i aria-hidden="true" /><b>赤い点を見て、準備</b><span>0.5秒後に注視点が出ます</span></div>}
+            {phase === "cueInterval" && <div className="cueInterval" role="status"><b>+</b><span>そのまま見て待つ</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
             {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → 押す</b><span>SPACEキー または このボタン</span></button><small>短いと思ったら、何もしない</small></div>}
             {phase === "feedback" && <div className={"feedback " + (feedback === "正解！" ? "ok" : "ng")}>{feedback}</div>}
           </div>
-          <div className="experimentFoot"><p>{phase === "cue" ? <><b>赤い点：準備</b><br />まだ押さないでください。</> : phase === "stimulus" ? <><b>刺激提示中：観察</b><br />刺激が消えるまで、まだ押さないでください。</> : phase === "response" ? <><b>刺激終了：判断</b><br />長いと思ったときだけ、大きいボタンを押してください。</> : <><b>刺激が消えてから判断</b><br />回答窓は {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</>}</p><button onClick={resetExperiment}>中止する</button></div>
+          <div className="experimentFoot"><p>{phase === "cue" ? <><b>赤い点：準備</b><br />まだ押さないでください。</> : phase === "cueInterval" ? <><b>注視点：待機</b><br />そのまま見て、次の刺激を待ちます。</> : phase === "stimulus" ? <><b>刺激提示中：観察</b><br />刺激が消えるまで、まだ押さないでください。</> : phase === "response" ? <><b>刺激終了：判断</b><br />長いと思ったときだけ、大きいボタンを押してください。</> : <><b>刺激が消えてから判断</b><br />回答窓は {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</>}</p><button onClick={resetExperiment}>中止する</button></div>
         </section>
       )}
 
@@ -525,13 +542,22 @@ export default function Home() {
         <section className="results">
           <div className="eyebrow"><span>YOUR RESULTS</span><i /></div>
           <div className="resultTitle"><div><p>0.8秒の役割が変わる二つのRound</p><h1>時間差？<br /><em>それとも比率？</em></h1></div><div className="score"><b>{Math.round((summaries.a.accuracy + summaries.b.accuracy) / 2)}</b><span>%<br />MEAN ACCURACY</span></div></div>
+          {individualFitA && individualFitB && <section className="driftHero">
+            <div><span>YOUR DATA × DDM</span><h2>証拠の進み方 <em>drift rate</em></h2><p>全本試行の押下率・RT・無反応を合わせて推定した値です。<b>|v|</b> が大きいほど、Go／No-goの証拠が速く分かれました。</p></div>
+            <div className="driftHeroGrid">
+              <article className={higherValueClass(individualFitA.evidenceStrength, individualFitB.evidenceStrength)}><span>0.2 vs 0.8秒</span><b>{formatDrift(individualFitA.drift)}</b><strong>|v| = {individualFitA.evidenceStrength.toFixed(2)}</strong><small>近似95%範囲：{formatDrift(individualFitA.intervalLow)} ～ {formatDrift(individualFitA.intervalHigh)}</small></article>
+              <article className={higherValueClass(individualFitB.evidenceStrength, individualFitA.evidenceStrength)}><span>0.8 vs 1.6秒</span><b>{formatDrift(individualFitB.drift)}</b><strong>|v| = {individualFitB.evidenceStrength.toFixed(2)}</strong><small>近似95%範囲：{formatDrift(individualFitB.intervalLow)} ～ {formatDrift(individualFitB.intervalHigh)}</small></article>
+            </div>
+          </section>}
           <div className="comparisonTable">
             <div className="tableHead"><span>あなたの結果</span><b>0.2 vs 0.8秒</b><b>0.8 vs 1.6秒</b></div>
-            <div><span>正答率</span><b>{summaries.a.accuracy}%</b><b>{summaries.b.accuracy}%</b></div>
-            <div><span>Hit率</span><b>{summaries.a.hitRate}%</b><b>{summaries.b.hitRate}%</b></div>
-            <div><span>False alarm率</span><b>{summaries.a.falseAlarmRate}%</b><b>{summaries.b.falseAlarmRate}%</b></div>
-            <div><span>Go RT 中央値</span><b>{summaries.a.goMedianRt === null ? "—" : summaries.a.goMedianRt + " ms"}</b><b>{summaries.b.goMedianRt === null ? "—" : summaries.b.goMedianRt + " ms"}</b></div>
+            <div><span>正答率 <small>高い方を強調</small></span><b className={higherValueClass(summaries.a.accuracy, summaries.b.accuracy)}>{summaries.a.accuracy}%</b><b className={higherValueClass(summaries.b.accuracy, summaries.a.accuracy)}>{summaries.b.accuracy}%</b></div>
+            <div><span>Hit率 <small>高い方を強調</small></span><b className={higherValueClass(summaries.a.hitRate, summaries.b.hitRate)}>{summaries.a.hitRate}%</b><b className={higherValueClass(summaries.b.hitRate, summaries.a.hitRate)}>{summaries.b.hitRate}%</b></div>
+            <div><span>False alarm率 <small>低い方を強調</small></span><b className={lowerValueClass(summaries.a.falseAlarmRate, summaries.b.falseAlarmRate)}>{summaries.a.falseAlarmRate}%</b><b className={lowerValueClass(summaries.b.falseAlarmRate, summaries.a.falseAlarmRate)}>{summaries.b.falseAlarmRate}%</b></div>
+            <div><span>Go RT 中央値 <small>速さのみを表示</small></span><b>{summaries.a.goMedianRt === null ? "—" : summaries.a.goMedianRt + " ms"}</b><b>{summaries.b.goMedianRt === null ? "—" : summaries.b.goMedianRt + " ms"}</b></div>
+            <div><span>No-go誤反応 RT 平均</span><b>{summaries.a.falseAlarmMeanRt === null ? "—" : summaries.a.falseAlarmMeanRt + " ms"}</b><b>{summaries.b.falseAlarmMeanRt === null ? "—" : summaries.b.falseAlarmMeanRt + " ms"}</b></div>
           </div>
+          <p className="comparisonNote">緑はその指標だけで相対的に良い値です。反応が速いことだけでは「より良い」とは決めず、正確さとあわせて読みます。</p>
           <div className="reveal">
             <span>種明かし</span>
             <h2>時間差が大きいのは問題B。でも比率が大きいのは問題A。</h2>
@@ -539,22 +565,7 @@ export default function Home() {
             <p>あなたの結果は予想と合いましたか？ 変化量そのものだけでなく、もとの大きさに対してどれだけ変わったかを使って区別している可能性があります。</p>
           </div>
           <div className="ddmSection">
-            <div><span>YOUR DATA × DDM</span><h2>あなたの本試行データから、ドリフト率を推定。</h2><p>ボタンを押した割合・押したときのRT・1.2秒以内に押さなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。</p></div>
-            {individualFitA && individualFitB && <>
-              <div className="driftTable">
-                <div className="driftHead"><span>比較条件</span><b>推定ドリフト率 v</b><b>証拠の強さ |v|</b><b>近似95%範囲</b></div>
-                <div><span>0.2 vs 0.8秒</span><b>{formatDrift(individualFitA.drift)}</b><b>{individualFitA.evidenceStrength.toFixed(2)}</b><b>{formatDrift(individualFitA.intervalLow)} ～ {formatDrift(individualFitA.intervalHigh)}</b></div>
-                <div><span>0.8 vs 1.6秒</span><b>{formatDrift(individualFitB.drift)}</b><b>{individualFitB.evidenceStrength.toFixed(2)}</b><b>{formatDrift(individualFitB.intervalLow)} ～ {formatDrift(individualFitB.intervalHigh)}</b></div>
-              </div>
-              <p className="fitReadout">
-                {individualFitA.evidenceStrength > individualFitB.evidenceStrength
-                  ? "今回のあなたのデータでは、0.2 vs 0.8秒の方が |v| が大きく、モデル上は証拠がよりはっきり分かれました。"
-                  : individualFitA.evidenceStrength < individualFitB.evidenceStrength
-                    ? "今回のあなたのデータでは、0.8 vs 1.6秒の方が |v| が大きく、モデル上は証拠がよりはっきり分かれました。"
-                    : "今回のあなたのデータでは、二つの条件の |v| は同じでした。"}
-                {" "}各Roundは本試行 {MAIN_TOTAL} 試行だけなので、範囲が広いときは結論を急がず、参加者全体のデータで確かめます。
-              </p>
-            </>}
+            <div><span>MODEL DETAILS</span><h2>ドリフト率は、反応と無反応を同時に説明する値。</h2><p>ボタンを押した割合・押したときのRT・1.2秒以内に押さなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。各Roundは本試行 {MAIN_TOTAL} 試行なので、範囲が広いときは参加者全体のデータで確かめます。</p></div>
             <div className="ddmGrid">
               <article><DdmSketch round="a" /><b>0.2 vs 0.8秒</b><p>4倍違う → 予測：|v| が大きい</p></article>
               <article><DdmSketch round="b" /><b>0.8 vs 1.6秒</b><p>2倍違う → 予測：|v| が小さい</p></article>
