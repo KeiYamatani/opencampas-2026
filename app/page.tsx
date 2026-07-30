@@ -52,8 +52,8 @@ type AggregateRecord = {
 
 const PRACTICE_TOTAL = 4;
 const MAIN_TOTAL = 14;
-const CUE_DURATION = 200;
-const CUE_TO_STIMULUS_INTERVAL = 200;
+const CUE_DURATION = 500;
+const CUE_TO_STIMULUS_INTERVAL = 1000;
 const STIMULUS_TO_RESPONSE_INTERVAL = 500;
 const RESPONSE_WINDOW = 1200;
 const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v2";
@@ -504,10 +504,10 @@ export default function Home() {
         <section className="roundIntro">
           <div className="eyebrow"><span>{config.label.toUpperCase()}</span><i /></div>
           <h1>{config.comparison}<br /><em>{config.role}</em></h1>
-          <p className="lead">赤い点を0.2秒、注視点を0.2秒見たあとに刺激が出ます。刺激が消えたら0.5秒待ち、回答開始後に長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
+          <p className="lead">赤い点を0.5秒、注視点を1.0秒見たあとに刺激が出ます。刺激が消えたら0.5秒待ち、回答開始後に長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
           {currentRound === "b" && <div className="flipNotice">今度は 0.8秒が「短い」です。</div>}
           <div className="roundRule"><span>短い {config.short / 1000}秒 → NO-GO</span><b>長い {config.long / 1000}秒 → SPACE / TAP</b></div>
-          <p className="cueSequence"><i /> 赤い点 <b>0.2秒</b>　→　＋ <b>0.2秒</b>　→　刺激　→　＋ <b>0.5秒</b>　→　回答</p>
+          <p className="cueSequence"><i /> 赤い点 <b>0.5秒</b>　→　＋ <b>1.0秒</b>　→　刺激　→　＋ <b>0.5秒</b>　→　回答</p>
           <button className="start" onClick={() => beginBlock("practice")}>練習 {PRACTICE_TOTAL}試行をはじめる <span>→</span></button>
         </section>
       )}
@@ -520,7 +520,7 @@ export default function Home() {
             <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
             {phase === "countdown" && <div className="count"><span>{currentBlock === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
             {phase === "waiting" && <div className="fixation"><b>+</b><span>次の試行を準備中</span></div>}
-            {phase === "cue" && <div className="cue" role="status"><i aria-hidden="true" /><b>赤い点を見て、準備</b><span>0.2秒後に注視点が出ます</span></div>}
+            {phase === "cue" && <div className="cue" role="status"><i aria-hidden="true" /><b>赤い点を見て、準備</b><span>0.5秒後に注視点が出ます</span></div>}
             {phase === "cueInterval" && <div className="cueInterval" role="status"><b>+</b><span>そのまま見て待つ</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
             {phase === "responseDelay" && <div className="cueInterval" role="status"><b>+</b><span>刺激終了 — そのまま待つ</span></div>}
