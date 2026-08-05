@@ -9,7 +9,7 @@ const ANALYSIS_HREF = BASE_PATH + "/analysis";
 const PARTICIPANT_URL = process.env.NEXT_PUBLIC_PARTICIPANT_URL ?? "https://keiyamatani.github.io/opencampas-2026/";
 const QR_IMAGE_URL = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&format=svg&margin=0&data=" + encodeURIComponent(PARTICIPANT_URL);
 
-type Phase = "intro" | "prediction" | "roundIntro" | "countdown" | "waiting" | "cue" | "cueInterval" | "stimulus" | "responseDelay" | "response" | "feedback" | "roundComplete" | "results";
+type Phase = "intro" | "prediction" | "roundIntro" | "countdown" | "waiting" | "fixation" | "stimulus" | "responseDelay" | "response" | "feedback" | "roundComplete" | "results";
 type RoundId = "a" | "b";
 type Block = "practice" | "main";
 type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
@@ -23,8 +23,8 @@ type Trial = {
   correctAction: "press" | "no_go";
   response: "press" | null;
   outcome: Outcome;
-  cueOnset: number;
-  cueOffset: number;
+  fixationOnset: number;
+  fixationOffset: number;
   stimulusOnset: number;
   stimulusOffset: number;
   responseWindowOnset: number;
@@ -52,10 +52,10 @@ type AggregateRecord = {
 
 const PRACTICE_TOTAL = 4;
 const MAIN_TOTAL = 14;
-const CUE_DURATION = 500;
-const CUE_TO_STIMULUS_INTERVAL = 1000;
+const FIXATION_DURATION = 1000;
 const STIMULUS_TO_RESPONSE_INTERVAL = 500;
 const RESPONSE_WINDOW = 1200;
+const GO_DISPLAY_DURATION = 1000;
 const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v2";
 const ROUNDS = {
   a: {
@@ -85,15 +85,28 @@ function nowTimestamp() {
 function buildTrials(round: RoundId, block: Block) {
   const config = ROUNDS[round];
   const total = block === "practice" ? PRACTICE_TOTAL : MAIN_TOTAL;
-  const plans: TrialPlan[] = [
+  const sourcePlans: TrialPlan[] = [
     ...Array(total / 2).fill({ duration: config.short, block, round }),
     ...Array(total / 2).fill({ duration: config.long, block, round }),
   ];
-  for (let i = plans.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [plans[i], plans[j]] = [plans[j], plans[i]];
+
+  // 同じ刺激が3回以上続かないランダムな並びだけを採用する。
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const plans = [...sourcePlans];
+    for (let i = plans.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [plans[i], plans[j]] = [plans[j], plans[i]];
+    }
+    if (!plans.some((plan, index) => index >= 2 && plan.duration === plans[index - 1].duration && plan.duration === plans[index - 2].duration)) {
+      return plans;
+    }
   }
-  return plans;
+
+  // 念のためのフォールバック。開始側は毎回ランダムにする。
+  const durations = Math.random() < 0.5
+    ? [config.short, config.long]
+    : [config.long, config.short];
+  return Array.from({ length: total }, (_, index) => ({ duration: durations[index % 2], block, round }));
 }
 
 function median(values: number[]) {
@@ -188,8 +201,8 @@ export default function Home() {
   const [participant, setParticipant] = useState("");
   const [aggregateRecords, setAggregateRecords] = useState<AggregateRecord[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cueOnsetRef = useRef<number | null>(null);
-  const cueOffsetRef = useRef<number | null>(null);
+  const fixationOnsetRef = useRef<number | null>(null);
+  const fixationOffsetRef = useRef<number | null>(null);
   const stimulusOnsetRef = useRef<number | null>(null);
   const stimulusOffsetRef = useRef<number | null>(null);
   const responseWindowOnsetRef = useRef<number | null>(null);
@@ -224,8 +237,8 @@ export default function Home() {
     const planned = plan[trialIndex];
     const roundConfig = ROUNDS[planned.round];
     const responseTimestamp = responded ? nowTimestamp() : null;
-    const cueOnset = cueOnsetRef.current ?? nowTimestamp();
-    const cueOffset = cueOffsetRef.current ?? cueOnset + CUE_DURATION;
+    const fixationOnset = fixationOnsetRef.current ?? nowTimestamp();
+    const fixationOffset = fixationOffsetRef.current ?? fixationOnset + FIXATION_DURATION;
     const stimulusOnset = stimulusOnsetRef.current ?? nowTimestamp();
     const stimulusOffset = stimulusOffsetRef.current ?? nowTimestamp();
     const responseWindowOnset = responseWindowOnsetRef.current ?? stimulusOffset + STIMULUS_TO_RESPONSE_INTERVAL;
@@ -242,8 +255,8 @@ export default function Home() {
       correctAction: trialType === "go" ? "press" : "no_go",
       response: responded ? "press" : null,
       outcome,
-      cueOnset,
-      cueOffset,
+      fixationOnset,
+      fixationOffset,
       stimulusOnset,
       stimulusOffset,
       responseWindowOnset,
@@ -267,10 +280,10 @@ export default function Home() {
     }, 650);
   }, [beep, clearTimer, plan, trialIndex]);
 
-  const beginCue = useCallback(() => {
-    cueOnsetRef.current = nowTimestamp();
-    cueOffsetRef.current = null;
-    setPhase("cue");
+  const beginFixation = useCallback(() => {
+    fixationOnsetRef.current = nowTimestamp();
+    fixationOffsetRef.current = null;
+    setPhase("fixation");
   }, []);
 
   const beginStimulus = useCallback(() => {
@@ -287,23 +300,17 @@ export default function Home() {
 
   useEffect(() => {
     if (phase !== "waiting") return;
-    const waitingTimer = setTimeout(beginCue, 650 + Math.floor(Math.random() * 850));
+    const waitingTimer = setTimeout(beginFixation, 650 + Math.floor(Math.random() * 850));
     return () => clearTimeout(waitingTimer);
-  }, [beginCue, phase, trialIndex]);
+  }, [beginFixation, phase, trialIndex]);
 
   useEffect(() => {
-    if (phase !== "cue") return;
-    const cueTimer = setTimeout(() => {
-      cueOffsetRef.current = nowTimestamp();
-      setPhase("cueInterval");
-    }, CUE_DURATION);
-    return () => clearTimeout(cueTimer);
-  }, [phase]);
-
-  useEffect(() => {
-    if (phase !== "cueInterval") return;
-    const intervalTimer = setTimeout(beginStimulus, CUE_TO_STIMULUS_INTERVAL);
-    return () => clearTimeout(intervalTimer);
+    if (phase !== "fixation") return;
+    const fixationTimer = setTimeout(() => {
+      fixationOffsetRef.current = nowTimestamp();
+      beginStimulus();
+    }, FIXATION_DURATION);
+    return () => clearTimeout(fixationTimer);
   }, [beginStimulus, phase]);
 
   useEffect(() => {
@@ -319,9 +326,11 @@ export default function Home() {
   useEffect(() => {
     if (phase !== "countdown") return;
     if (countdown === 0) {
-      lockedRef.current = false;
-      setPhase("waiting");
-      return;
+      timerRef.current = setTimeout(() => {
+        lockedRef.current = false;
+        setPhase("waiting");
+      }, GO_DISPLAY_DURATION);
+      return clearTimer;
     }
     timerRef.current = setTimeout(() => setCountdown(value => value - 1), 700);
     return clearTimer;
@@ -405,7 +414,7 @@ export default function Home() {
   const exportCsv = () => {
     const header = [
       "participant_id", "round", "comparison", "trial_block", "trial", "stimulus_duration",
-      "trial_type", "correct_action", "response", "outcome", "cue_onset", "cue_offset", "stimulus_onset", "stimulus_offset", "response_window_onset",
+      "trial_type", "correct_action", "response", "outcome", "fixation_onset", "fixation_offset", "stimulus_onset", "stimulus_offset", "response_window_onset",
       "response_timestamp", "rt_from_onset", "rt_from_offset", "rt_from_response_window", "timeout_duration",
     ].join(",") + "\n";
     const rows = trials.map(trial => [
@@ -419,8 +428,8 @@ export default function Home() {
       trial.correctAction,
       trial.response,
       trial.outcome,
-      new Date(trial.cueOnset).toISOString(),
-      new Date(trial.cueOffset).toISOString(),
+      new Date(trial.fixationOnset).toISOString(),
+      new Date(trial.fixationOffset).toISOString(),
       new Date(trial.stimulusOnset).toISOString(),
       new Date(trial.stimulusOffset).toISOString(),
       new Date(trial.responseWindowOnset).toISOString(),
@@ -439,7 +448,7 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  const active = ["countdown", "waiting", "cue", "cueInterval", "stimulus", "responseDelay", "response", "feedback"].includes(phase);
+  const active = ["countdown", "waiting", "fixation", "stimulus", "responseDelay", "response", "feedback"].includes(phase);
   const aggregateA = aggregate(aggregateRecords, "a");
   const aggregateB = aggregate(aggregateRecords, "b");
   const isPracticeComplete = phase === "roundComplete" && currentBlock === "practice";
@@ -504,10 +513,10 @@ export default function Home() {
         <section className="roundIntro">
           <div className="eyebrow"><span>{config.label.toUpperCase()}</span><i /></div>
           <h1>{config.comparison}<br /><em>{config.role}</em></h1>
-          <p className="lead">赤い点を0.5秒、注視点を1.0秒見たあとに刺激が出ます。刺激が消えたら0.5秒待ち、回答開始後に長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
+          <p className="lead">十字の注視点を1.0秒見たあとに刺激が出ます。刺激が消えたら0.5秒待ち、回答開始後に長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
           {currentRound === "b" && <div className="flipNotice">今度は 0.8秒が「短い」です。</div>}
           <div className="roundRule"><span>短い {config.short / 1000}秒 → NO-GO</span><b>長い {config.long / 1000}秒 → SPACE / TAP</b></div>
-          <p className="cueSequence"><i /> 赤い点 <b>0.5秒</b>　→　＋ <b>1.0秒</b>　→　刺激　→　＋ <b>0.5秒</b>　→　回答</p>
+          <p className="trialSequence">＋ 注視点 <b>1.0秒</b>　→　刺激　→　＋ <b>0.5秒</b>　→　回答</p>
           <button className="start" onClick={() => beginBlock("practice")}>練習 {PRACTICE_TOTAL}試行をはじめる <span>→</span></button>
         </section>
       )}
@@ -520,14 +529,13 @@ export default function Home() {
             <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
             {phase === "countdown" && <div className="count"><span>{currentBlock === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
             {phase === "waiting" && <div className="fixation"><b>+</b><span>次の試行を準備中</span></div>}
-            {phase === "cue" && <div className="cue" role="status"><i aria-hidden="true" /><b>赤い点を見て、準備</b><span>0.5秒後に注視点が出ます</span></div>}
-            {phase === "cueInterval" && <div className="cueInterval" role="status"><b>+</b><span>そのまま見て待つ</span></div>}
+            {phase === "fixation" && <div className="fixation ready" role="status"><b>+</b><span>十字の注視点を見て待つ</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
-            {phase === "responseDelay" && <div className="cueInterval" role="status"><b>+</b><span>刺激終了 — そのまま待つ</span></div>}
+            {phase === "responseDelay" && <div className="postStimulusFixation" role="status"><b>+</b><span>刺激終了 — そのまま待つ</span></div>}
             {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → 押す</b><span>SPACEキー または このボタン</span></button><small>短いと思ったら、何もしない</small></div>}
             {phase === "feedback" && <div className={"feedback " + (feedback === "正解！" ? "ok" : "ng")}>{feedback}</div>}
           </div>
-          <div className="experimentFoot"><p>{phase === "cue" ? <><b>赤い点：準備</b><br />まだ押さないでください。</> : phase === "cueInterval" ? <><b>注視点：待機</b><br />そのまま見て、次の刺激を待ちます。</> : phase === "stimulus" ? <><b>刺激提示中：観察</b><br />刺激が消えるまで、まだ押さないでください。</> : phase === "responseDelay" ? <><b>刺激終了後の待機</b><br />0.5秒後に回答ボタンが出ます。</> : phase === "response" ? <><b>回答開始：判断</b><br />長いと思ったときだけ、大きいボタンを押してください。</> : <><b>回答は刺激終了の0.5秒後から</b><br />回答窓は開始後 {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</>}</p><button onClick={resetExperiment}>中止する</button></div>
+          <div className="experimentFoot"><p>{phase === "fixation" ? <><b>十字の注視点：待機</b><br />そのまま見て、次の刺激を待ちます。</> : phase === "stimulus" ? <><b>刺激提示中：観察</b><br />刺激が消えるまで、まだ押さないでください。</> : phase === "responseDelay" ? <><b>刺激終了後の待機</b><br />0.5秒後に回答ボタンが出ます。</> : phase === "response" ? <><b>回答開始：判断</b><br />長いと思ったときだけ、大きいボタンを押してください。</> : <><b>回答は刺激終了の0.5秒後から</b><br />回答窓は開始後 {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</>}</p><button onClick={resetExperiment}>中止する</button></div>
         </section>
       )}
 
