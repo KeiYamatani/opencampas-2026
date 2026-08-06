@@ -1,275 +1,345 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
-import { fitSymmetricDdm, formatDrift, type DdmObservation } from "../../lib/ddm";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { COMPARISON_DDM_SETTINGS, fitComparisonDdm, formatComparisonDrift, type ComparisonObservation, type ComparisonResponse } from "../../lib/comparison-ddm";
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const HOME_HREF = BASE_PATH ? BASE_PATH + "/" : "/";
-const SUPPORTED_TASK_VERSION = "immediate-response-v1";
+const DURATIONS = [200, 400, 800, 1600] as const;
+const PRACTICE_REPEATS = { 2: 1, 4: 1, 8: 1 } as const;
+const MAIN_REPEATS = { 2: 4, 4: 6, 8: 12 } as const;
+const FIXATION_DURATION = 800;
+const RESPONSE_WINDOW = COMPARISON_DDM_SETTINGS.responseWindowMs;
+const GO_DISPLAY_DURATION = 1000;
+const TASK_VERSION = "serial-comparison-v1";
 
-type RoundId = "a" | "b";
-type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
-type ImportedTrial = DdmObservation & {
-  round: RoundId;
-  outcome: Outcome;
-};
-type ImportedSession = {
-  fileName: string;
-  participantId: string;
-  trials: ImportedTrial[];
-};
-type GroupSummary = {
-  participants: number;
-  trials: number;
-  accuracy: number | null;
-  hitRate: number | null;
-  falseAlarmRate: number | null;
-  goMedianRt: number | null;
-  falseAlarmMeanRt: number | null;
+type Block = "practice" | "main";
+type Phase = "intro" | "countdown" | "reference" | "waiting" | "fixation" | "stimulus" | "response" | "feedback" | "practiceComplete" | "results";
+type Ratio = 2 | 4 | 8;
+type TrialOutcome = "correct" | "incorrect" | "timeout";
+type Trial = ComparisonObservation & {
+  block: Block;
+  index: number;
+  previousDuration: number;
+  currentDuration: number;
+  outcome: TrialOutcome;
+  stimulusOnset: number;
+  stimulusOffset: number;
+  responseWindowOnset: number;
+  responseTimestamp: number | null;
 };
 
-const ROUND_LABEL: Record<RoundId, string> = {
-  a: "0.2秒 vs 0.8秒",
-  b: "0.8秒 vs 1.6秒",
-};
+function nowTimestamp() {
+  return performance.timeOrigin + performance.now();
+}
+
+function durationRatio(first: number, second: number): Ratio {
+  return Math.max(first, second) / Math.min(first, second) as Ratio;
+}
+
+function shuffle<T>(items: T[]) {
+  for (let index = items.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [items[index], items[swapIndex]] = [items[swapIndex], items[index]];
+  }
+  return items;
+}
+
+/** Builds a randomized Eulerian path, so each directed duration pair has its planned count. */
+function buildStimulusSequence(block: Block) {
+  const repeats = block === "practice" ? PRACTICE_REPEATS : MAIN_REPEATS;
+  const adjacency = DURATIONS.map(() => [] as number[]);
+  for (let from = 0; from < DURATIONS.length; from += 1) {
+    for (let to = 0; to < DURATIONS.length; to += 1) {
+      if (from === to) continue;
+      const ratio = durationRatio(DURATIONS[from], DURATIONS[to]);
+      for (let repeat = 0; repeat < repeats[ratio]; repeat += 1) adjacency[from].push(to);
+    }
+  }
+  adjacency.forEach(shuffle);
+  const start = Math.floor(Math.random() * DURATIONS.length);
+  const stack = [start];
+  const reversedCircuit: number[] = [];
+  while (stack.length) {
+    const node = stack[stack.length - 1];
+    const next = adjacency[node].pop();
+    if (next === undefined) reversedCircuit.push(stack.pop()!);
+    else stack.push(next);
+  }
+  return reversedCircuit.reverse().map(index => DURATIONS[index]);
+}
 
 function median(values: number[]) {
   if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
+  const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
 }
 
-function parseCsv(text: string) {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let quoted = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    if (character === '"') {
-      if (quoted && text[index + 1] === '"') {
-        cell += '"';
-        index += 1;
-      } else {
-        quoted = !quoted;
-      }
-    } else if (character === "," && !quoted) {
-      row.push(cell);
-      cell = "";
-    } else if ((character === "\n" || character === "\r") && !quoted) {
-      if (character === "\r" && text[index + 1] === "\n") index += 1;
-      row.push(cell);
-      if (row.some(value => value !== "")) rows.push(row);
-      row = [];
-      cell = "";
-    } else {
-      cell += character;
-    }
-  }
-  row.push(cell);
-  if (row.some(value => value !== "")) rows.push(row);
-  return rows;
-}
-
-function nullableNumber(value: string | undefined) {
-  if (value === undefined || value === "" || value.toLowerCase() === "null") return null;
-  const result = Number(value);
-  return Number.isFinite(result) ? result : null;
-}
-
-function parseSession(fileName: string, text: string): ImportedSession {
-  const rows = parseCsv(text);
-  if (rows.length < 2) throw new Error("試行データが見つかりません。");
-  const headers = rows[0].map(header => header.replace(/^\uFEFF/, "").trim());
-  const column = (name: string) => headers.indexOf(name);
-  const required = ["task_version", "round", "trial_block", "trial_type", "response", "outcome", "rt_from_offset"];
-  const missing = required.filter(name => column(name) === -1);
-  if (missing.length) throw new Error("このCSVは課題の出力形式ではありません（不足：" + missing.join(", ") + "）。");
-
-  const valueAt = (row: string[], name: string) => row[column(name)]?.trim() ?? "";
-  const taskVersion = valueAt(rows[1], "task_version");
-  if (taskVersion !== SUPPORTED_TASK_VERSION) throw new Error("現在の即時回答版（" + SUPPORTED_TASK_VERSION + "）のCSVではありません。");
-  const participantColumn = column("participant_id");
-  const participantId = participantColumn === -1 ? "匿名" : (rows[1][participantColumn]?.trim() || "匿名");
-  const trials: ImportedTrial[] = [];
-
-  for (const row of rows.slice(1)) {
-    if (valueAt(row, "trial_block") !== "main") continue;
-    const round = valueAt(row, "round").toLowerCase();
-    const trialType = valueAt(row, "trial_type");
-    const outcome = valueAt(row, "outcome") as Outcome;
-    if ((round !== "a" && round !== "b") || (trialType !== "go" && trialType !== "no_go")) continue;
-    if (!["hit", "miss", "correct_rejection", "false_alarm"].includes(outcome)) continue;
-    trials.push({
-      round,
-      trialType,
-      response: valueAt(row, "response") === "press" ? "press" : null,
-      outcome,
-      rtFromOffset: nullableNumber(valueAt(row, "rt_from_offset")),
-    });
-  }
-  if (!trials.length) throw new Error("本試行（trial_block=main）の有効な行がありません。");
-  return { fileName, participantId, trials };
-}
-
-function summarize(sessions: ImportedSession[], round: RoundId): GroupSummary {
-  const trials = sessions.flatMap(session => session.trials.filter(trial => trial.round === round));
-  const go = trials.filter(trial => trial.trialType === "go");
-  const noGo = trials.filter(trial => trial.trialType === "no_go");
-  const hits = go.filter(trial => trial.outcome === "hit");
-  const falseAlarms = noGo.filter(trial => trial.outcome === "false_alarm");
-  const hitRts = hits.flatMap(trial => trial.rtFromOffset === null ? [] : [trial.rtFromOffset]);
-  const falseAlarmRts = falseAlarms.flatMap(trial => trial.rtFromOffset === null ? [] : [trial.rtFromOffset]);
-  return {
-    participants: new Set(sessions.filter(session => session.trials.some(trial => trial.round === round)).map(session => session.fileName)).size,
-    trials: trials.length,
-    accuracy: trials.length ? trials.filter(trial => trial.outcome === "hit" || trial.outcome === "correct_rejection").length / trials.length * 100 : null,
-    hitRate: go.length ? hits.length / go.length * 100 : null,
-    falseAlarmRate: noGo.length ? falseAlarms.length / noGo.length * 100 : null,
-    goMedianRt: median(hitRts),
-    falseAlarmMeanRt: falseAlarmRts.length ? falseAlarmRts.reduce((sum, value) => sum + value, 0) / falseAlarmRts.length : null,
-  };
-}
-
-function groupObservations(sessions: ImportedSession[], round: RoundId) {
-  return sessions.flatMap(session => session.trials.filter(trial => trial.round === round).map(({ trialType, response, rtFromOffset }) => ({ trialType, response, rtFromOffset })));
-}
-
-function rate(value: number | null) {
-  return value === null ? "—" : value.toFixed(1) + "%";
-}
-
-function milliseconds(value: number | null) {
-  return value === null ? "—" : Math.round(value) + " ms";
-}
-
 function csvCell(value: string | number | null) {
-  const text = value === null ? "" : String(value);
+  const text = value === null ? "null" : String(value);
   return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
 }
 
-export default function AnalysisPage() {
-  const [sessions, setSessions] = useState<ImportedSession[]>([]);
-  const [messages, setMessages] = useState<string[]>([]);
+function ratioSummary(trials: Trial[], ratio: Ratio) {
+  const selected = trials.filter(trial => trial.block === "main" && trial.ratio === ratio);
+  const responded = selected.flatMap(trial => trial.rtFromOffset === null ? [] : [trial.rtFromOffset]);
+  const correct = selected.filter(trial => trial.outcome === "correct").length;
+  return {
+    count: selected.length,
+    accuracy: selected.length ? Math.round(correct / selected.length * 100) : 0,
+    medianRt: median(responded),
+    timeouts: selected.filter(trial => trial.outcome === "timeout").length,
+  };
+}
 
-  const summaryA = useMemo(() => summarize(sessions, "a"), [sessions]);
-  const summaryB = useMemo(() => summarize(sessions, "b"), [sessions]);
-  const fitA = useMemo(() => fitSymmetricDdm(groupObservations(sessions, "a")), [sessions]);
-  const fitB = useMemo(() => fitSymmetricDdm(groupObservations(sessions, "b")), [sessions]);
+export default function ComparisonPage() {
+  const [phase, setPhase] = useState<Phase>("intro");
+  const [block, setBlock] = useState<Block>("practice");
+  const [countdown, setCountdown] = useState(3);
+  const [participant, setParticipant] = useState("");
+  const [stimulusSequence, setStimulusSequence] = useState<number[]>([]);
+  const [trialIndex, setTrialIndex] = useState(0);
+  const [trials, setTrials] = useState<Trial[]>([]);
+  const [feedback, setFeedback] = useState("");
+  const [soundOn, setSoundOn] = useState(true);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stimulusOnsetRef = useRef<number | null>(null);
+  const stimulusOffsetRef = useRef<number | null>(null);
+  const responseWindowOnsetRef = useRef<number | null>(null);
+  const lockedRef = useRef(false);
 
-  const importFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    if (!files.length) return;
-    const parsed = await Promise.all(files.map(async file => {
-      try {
-        return { session: parseSession(file.name, await file.text()), message: null };
-      } catch (error) {
-        return { session: null, message: file.name + "：" + (error instanceof Error ? error.message : "読み込みに失敗しました。") };
+  const comparisonsTotal = Math.max(0, stimulusSequence.length - 1);
+  const previousDuration = stimulusSequence[trialIndex];
+  const currentDuration = stimulusSequence[trialIndex + 1];
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }, []);
+
+  const beep = useCallback((frequency = 620, duration = 90) => {
+    if (!soundOn) return;
+    const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const context = new AudioCtx();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.08, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + duration / 1000);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + duration / 1000);
+  }, [soundOn]);
+
+  const beginReference = useCallback(() => {
+    const referenceDuration = stimulusSequence[0];
+    if (!referenceDuration) return;
+    stimulusOnsetRef.current = nowTimestamp();
+    setPhase("reference");
+    beep(520, 70);
+    timerRef.current = setTimeout(() => {
+      stimulusOffsetRef.current = nowTimestamp();
+      setPhase("waiting");
+    }, referenceDuration);
+  }, [beep, stimulusSequence]);
+
+  const finishTrial = useCallback((response: ComparisonResponse | null) => {
+    if (lockedRef.current || previousDuration === undefined || currentDuration === undefined) return;
+    lockedRef.current = true;
+    clearTimer();
+    const correctResponse: ComparisonResponse = currentDuration > previousDuration ? "longer" : "shorter";
+    const responseTimestamp = response === null ? null : nowTimestamp();
+    const stimulusOnset = stimulusOnsetRef.current ?? nowTimestamp();
+    const stimulusOffset = stimulusOffsetRef.current ?? nowTimestamp();
+    const responseWindowOnset = responseWindowOnsetRef.current ?? stimulusOffset;
+    const outcome: TrialOutcome = response === null ? "timeout" : response === correctResponse ? "correct" : "incorrect";
+    setTrials(current => [...current, {
+      block,
+      index: trialIndex + 1,
+      previousDuration,
+      currentDuration,
+      ratio: durationRatio(previousDuration, currentDuration),
+      correctResponse,
+      response,
+      outcome,
+      stimulusOnset,
+      stimulusOffset,
+      responseWindowOnset,
+      responseTimestamp,
+      rtFromOffset: responseTimestamp === null ? null : Math.round(responseTimestamp - stimulusOffset),
+    }]);
+    setFeedback(outcome === "correct" ? "正解！" : outcome === "incorrect" ? "反対です" : "時間切れ");
+    beep(outcome === "correct" ? 760 : 220, 120);
+    setPhase("feedback");
+    timerRef.current = setTimeout(() => {
+      if (trialIndex + 1 >= comparisonsTotal) {
+        setPhase(block === "practice" ? "practiceComplete" : "results");
+      } else {
+        setTrialIndex(index => index + 1);
+        lockedRef.current = false;
+        setPhase("waiting");
       }
-    }));
-    const incoming = parsed.flatMap(result => result.session ? [result.session] : []);
-    setSessions(current => [...current.filter(session => !incoming.some(next => next.fileName === session.fileName)), ...incoming]);
-    setMessages(parsed.flatMap(result => result.message ? [result.message] : []));
-    event.target.value = "";
+    }, 650);
+  }, [beep, block, clearTimer, comparisonsTotal, currentDuration, previousDuration, trialIndex]);
+
+  const beginComparisonStimulus = useCallback(() => {
+    if (!currentDuration) return;
+    stimulusOnsetRef.current = nowTimestamp();
+    stimulusOffsetRef.current = null;
+    responseWindowOnsetRef.current = null;
+    setPhase("stimulus");
+    beep(520, 70);
+    timerRef.current = setTimeout(() => {
+      const offset = nowTimestamp();
+      stimulusOffsetRef.current = offset;
+      responseWindowOnsetRef.current = offset;
+      setPhase("response");
+      timerRef.current = setTimeout(() => finishTrial(null), RESPONSE_WINDOW);
+    }, currentDuration);
+  }, [beep, currentDuration, finishTrial]);
+
+  // Re-create the stimulus callback after finishTrial is available.
+  useEffect(() => {
+    if (phase !== "waiting") return;
+    const waitingTimer = setTimeout(() => {
+      setPhase("fixation");
+    }, 650 + Math.floor(Math.random() * 650));
+    return () => clearTimeout(waitingTimer);
+  }, [phase, trialIndex]);
+
+  useEffect(() => {
+    if (phase !== "fixation") return;
+    const fixationTimer = setTimeout(() => {
+      beginComparisonStimulus();
+    }, FIXATION_DURATION);
+    return () => clearTimeout(fixationTimer);
+  }, [beginComparisonStimulus, phase]);
+
+  useEffect(() => {
+    if (phase !== "countdown") return;
+    if (countdown === 0) {
+      timerRef.current = setTimeout(() => {
+        lockedRef.current = false;
+        beginReference();
+      }, GO_DISPLAY_DURATION);
+      return clearTimer;
+    }
+    timerRef.current = setTimeout(() => setCountdown(value => value - 1), 700);
+    return clearTimer;
+  }, [beginReference, clearTimer, countdown, phase]);
+
+  const chooseResponse = useCallback((response: ComparisonResponse) => {
+    if (phase === "response") finishTrial(response);
+  }, [finishTrial, phase]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "ArrowLeft") {
+        event.preventDefault();
+        chooseResponse("shorter");
+      }
+      if (event.code === "ArrowRight") {
+        event.preventDefault();
+        chooseResponse("longer");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [chooseResponse]);
+
+  const beginBlock = (nextBlock: Block) => {
+    clearTimer();
+    setBlock(nextBlock);
+    setStimulusSequence(buildStimulusSequence(nextBlock));
+    setTrialIndex(0);
+    setCountdown(3);
+    lockedRef.current = false;
+    setPhase("countdown");
   };
 
-  const exportSummary = () => {
-    const rows = [
-      ["metric", ROUND_LABEL.a, ROUND_LABEL.b],
-      ["participants", summaryA.participants, summaryB.participants],
-      ["main_trials", summaryA.trials, summaryB.trials],
-      ["accuracy_percent", summaryA.accuracy, summaryB.accuracy],
-      ["hit_rate_percent", summaryA.hitRate, summaryB.hitRate],
-      ["false_alarm_rate_percent", summaryA.falseAlarmRate, summaryB.falseAlarmRate],
-      ["go_rt_median_ms", summaryA.goMedianRt, summaryB.goMedianRt],
-      ["false_alarm_rt_mean_ms", summaryA.falseAlarmMeanRt, summaryB.falseAlarmMeanRt],
-      ["ddm_drift_v_per_second", fitA?.drift ?? null, fitB?.drift ?? null],
-      ["ddm_evidence_strength_abs_v", fitA?.evidenceStrength ?? null, fitB?.evidenceStrength ?? null],
-      ["ddm_profile_95_low", fitA?.intervalLow ?? null, fitB?.intervalLow ?? null],
-      ["ddm_profile_95_high", fitA?.intervalHigh ?? null, fitB?.intervalHigh ?? null],
-    ];
-    const csv = "\ufeff" + rows.map(row => row.map(value => csvCell(value)).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const reset = () => {
+    clearTimer();
+    lockedRef.current = false;
+    setBlock("practice");
+    setStimulusSequence([]);
+    setTrialIndex(0);
+    setTrials([]);
+    setPhase("intro");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const mainTrials = trials.filter(trial => trial.block === "main");
+  const fits = useMemo(() => ([2, 4, 8] as Ratio[]).map(ratio => ({
+    ratio,
+    summary: ratioSummary(trials, ratio),
+    fit: fitComparisonDdm(mainTrials.filter(trial => trial.ratio === ratio)),
+  })), [mainTrials, trials]);
+  const overallAccuracy = mainTrials.length ? Math.round(mainTrials.filter(trial => trial.outcome === "correct").length / mainTrials.length * 100) : 0;
+
+  const exportCsv = () => {
+    const header = ["participant_id", "task_version", "trial_block", "trial", "previous_duration", "current_duration", "ratio", "correct_response", "response", "outcome", "stimulus_onset", "stimulus_offset", "response_window_onset", "response_timestamp", "rt_from_offset", "timeout_duration"].join(",") + "\n";
+    const rows = trials.map(trial => [
+      participant || "anonymous", TASK_VERSION, trial.block, trial.index, trial.previousDuration, trial.currentDuration,
+      trial.ratio, trial.correctResponse, trial.response, trial.outcome,
+      new Date(trial.stimulusOnset).toISOString(), new Date(trial.stimulusOffset).toISOString(), new Date(trial.responseWindowOnset).toISOString(),
+      trial.responseTimestamp === null ? null : new Date(trial.responseTimestamp).toISOString(), trial.rtFromOffset, RESPONSE_WINDOW,
+    ].map(csvCell).join(",")).join("\n");
+    const blob = new Blob(["\ufeff" + header + rows], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "gonogo-group-summary-" + Date.now() + ".csv";
+    anchor.download = "serial-time-comparison-" + Date.now() + ".csv";
     anchor.click();
     URL.revokeObjectURL(url);
   };
 
-  const evidenceMessage = !fitA || !fitB ? "CSVを読み込むと、二条件の推定ドリフト率を比較できます。"
-    : fitA.evidenceStrength > fitB.evidenceStrength ? "この集計では、0.2 vs 0.8秒の方が |v| が大きくなりました。"
-      : fitA.evidenceStrength < fitB.evidenceStrength ? "この集計では、0.8 vs 1.6秒の方が |v| が大きくなりました。"
-        : "この集計では、二条件の |v| は同じでした。";
+  const active = ["countdown", "reference", "waiting", "fixation", "stimulus", "response", "feedback"].includes(phase);
 
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href={HOME_HREF} aria-label="課題トップへ">
-          <span className="brandMark">N</span>
-          <span>NEURO<br /><b>DECISION LAB</b></span>
-        </a>
-        <a className="analysisLink" href={HOME_HREF}>← 課題に戻る</a>
+        <a className="brand" href={HOME_HREF} aria-label="課題選択へ"><span className="brandMark">N</span><span>NEURO<br /><b>DECISION LAB</b></span></a>
+        <button className="sound" onClick={() => setSoundOn(value => !value)} aria-pressed={soundOn}><span>{soundOn ? "●" : "○"}</span> SOUND {soundOn ? "ON" : "OFF"}</button>
       </header>
 
-      <section className="analysisPage">
-        <div className="eyebrow"><span>GROUP ANALYSIS</span><i /></div>
-        <p className="kicker">複数参加者の集計</p>
-        <h1>みんなの行動から、<br /><em>証拠の進み方</em>を読む。</h1>
-        <p className="lead">参加者ごとに保存したCSVを複数選択して読み込みます。本試行だけを集計し、二つの条件の成績とDDMドリフト率を同じ方法で計算します。</p>
+      {phase === "intro" && <section className="comparisonIntro">
+        <div className="eyebrow"><span>SERIAL COMPARISON</span><i /></div>
+        <p className="kicker">時間比較課題</p>
+        <h1>今回の刺激は、<br /><em>前より長い？</em></h1>
+        <p className="lead">0.2、0.4、0.8、1.6秒の刺激が続けて現れます。今回の刺激が直前の刺激より長いか短いかを、毎回選びます。</p>
+        <div className="serialProtocol"><span>前の刺激を記憶</span><i>→</i><span>今回の刺激を見る</span><i>→</i><b>長い／短いを選ぶ</b></div>
+        <div className="ratioGuide"><article><b>2倍</b><span>0.2↔0.4<br />0.4↔0.8<br />0.8↔1.6</span></article><article><b>4倍</b><span>0.2↔0.8<br />0.4↔1.6</span></article><article><b>8倍</b><span>0.2↔1.6</span></article></div>
+        <div className="startRow"><label><span>参加者ID（任意）</span><input value={participant} onChange={event => setParticipant(event.target.value)} placeholder="例：A12" maxLength={20} /></label><button className="start" onClick={() => beginBlock("practice")}>練習をはじめる <span>→</span></button><p>練習 12比較 → 本試行 72比較。比率ごとに24比較ずつ、前後の順序は同数です。</p></div>
+      </section>}
 
-        <label className="uploadPanel">
-          <input type="file" accept=".csv,text/csv" multiple onChange={importFiles} />
-          <span>CSVを選択する</span>
-          <b>参加者ごとの <code>time-context-gonogo-*.csv</code> を複数選択できます</b>
-          <small>ファイルはこのブラウザ内でだけ処理され、サーバーには送信されません。</small>
-        </label>
+      {active && <section className="experiment comparisonExperiment">
+        <div className="progressHead"><span>{block === "practice" ? "PRACTICE" : "MAIN TASK"} / SERIAL COMPARISON</span><b>{phase === "reference" ? "00" : String(Math.min(trialIndex + 1, comparisonsTotal)).padStart(2, "0")} <i>/ {comparisonsTotal}</i></b></div>
+        <div className="progress"><i style={{ width: comparisonsTotal ? String((trialIndex / comparisonsTotal) * 100) + "%" : "0%" }} /></div>
+        <div className={"stage " + phase}>
+          <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
+          {phase === "countdown" && <div className="count"><span>{block === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
+          {phase === "reference" && <div className="serialStimulus"><span>最初の刺激 — 覚えておく</span><div className="orb"><i /></div><small>まだ回答しません</small></div>}
+          {phase === "waiting" && <div className="fixation"><b>+</b><span>前の刺激を覚えて待つ</span></div>}
+          {phase === "fixation" && <div className="fixation"><b>+</b><span>次の刺激を見比べる</span></div>}
+          {phase === "stimulus" && <div className="serialStimulus"><span>今回の刺激</span><div className="orb"><i /></div><small>まだ回答しません</small></div>}
+          {phase === "response" && <div className="comparisonRespond"><h2>今回の刺激は？</h2><div className="comparisonResponseButtons"><button type="button" className="shorterButton" onPointerDown={event => { event.preventDefault(); chooseResponse("shorter"); }} onClick={() => chooseResponse("shorter")}><b>短い</b><span>← 左矢印キー</span></button><button type="button" className="longerButton" onPointerDown={event => { event.preventDefault(); chooseResponse("longer"); }} onClick={() => chooseResponse("longer")}><b>長い</b><span>右矢印キー →</span></button></div><small>直前の刺激と比べて選んでください</small></div>}
+          {phase === "feedback" && <div className={"feedback " + (feedback === "正解！" ? "ok" : "ng")}>{feedback}</div>}
+        </div>
+        <div className="experimentFoot"><p>{phase === "reference" ? <><b>最初の刺激</b><br />長さを覚えてください。</> : phase === "stimulus" ? <><b>今回の刺激を観察</b><br />直前の刺激と比べます。</> : phase === "response" ? <><b>回答開始</b><br />前の刺激より短いか長いかを選びます。</> : <><b>回答は今回の刺激終了直後</b><br />回答窓は {RESPONSE_WINDOW / 1000} 秒です。</>}</p><button onClick={reset}>中止する</button></div>
+      </section>}
 
-        {messages.length > 0 && <div className="importMessages">{messages.map(message => <p key={message}>{message}</p>)}</div>}
+      {phase === "practiceComplete" && <section className="comparisonIntro"><div className="eyebrow"><span>PRACTICE COMPLETE</span><i /></div><h1>練習終了。<br /><em>本試行</em>へ進もう。</h1><p className="lead">ここからは、比率2倍・4倍・8倍の比較が各24回ずつ現れます。</p><button className="start" onClick={() => beginBlock("main")}>本試行 72比較をはじめる <span>→</span></button></section>}
 
-        {sessions.length === 0 ? (
-          <div className="emptyAnalysis">
-            <b>まず参加者CSVを読み込んでください。</b>
-            <p>課題の結果画面にある「CSVを保存」から出力したファイルに対応しています。匿名参加者でも、1ファイルを1セッションとして集計します。</p>
-          </div>
-        ) : <>
-          <div className="groupOverview">
-            <article><span>IMPORTED SESSIONS</span><b>{sessions.length}</b><p>CSVファイル数</p></article>
-            <article><span>MAIN TRIALS</span><b>{summaryA.trials + summaryB.trials}</b><p>練習試行は除外</p></article>
-            <article><span>PARTICIPANTS</span><b>{new Set(sessions.map(session => session.participantId).filter(id => id !== "匿名")).size || sessions.length}</b><p>匿名時はセッション数</p></article>
-          </div>
-
-          <div className="analysisTable">
-            <div className="tableHead"><span>参加者全体の結果</span><b>{ROUND_LABEL.a}</b><b>{ROUND_LABEL.b}</b></div>
-            <div><span>参加セッション数</span><b>{summaryA.participants}</b><b>{summaryB.participants}</b></div>
-            <div><span>本試行数</span><b>{summaryA.trials}</b><b>{summaryB.trials}</b></div>
-            <div><span>正答率</span><b>{rate(summaryA.accuracy)}</b><b>{rate(summaryB.accuracy)}</b></div>
-            <div><span>Hit率</span><b>{rate(summaryA.hitRate)}</b><b>{rate(summaryB.hitRate)}</b></div>
-            <div><span>False alarm率</span><b>{rate(summaryA.falseAlarmRate)}</b><b>{rate(summaryB.falseAlarmRate)}</b></div>
-            <div><span>Go RT 中央値</span><b>{milliseconds(summaryA.goMedianRt)}</b><b>{milliseconds(summaryB.goMedianRt)}</b></div>
-            <div><span>No-go誤反応 RT 平均</span><b>{milliseconds(summaryA.falseAlarmMeanRt)}</b><b>{milliseconds(summaryB.falseAlarmMeanRt)}</b></div>
-          </div>
-
-          {fitA && fitB && <section className="groupDdm">
-            <div><span>POOLED DDM ESTIMATE</span><h2>全参加者の試行をまとめて、ドリフト率を推定。</h2><p>各CSVの推定値を平均するのではなく、すべての本試行の押下率・RT・無反応を一つの尤度へ入れて推定します。</p></div>
-            <div className="groupDdmGrid">
-              <article><span>0.2 vs 0.8秒</span><b>{formatDrift(fitA.drift)}</b><strong>|v| = {fitA.evidenceStrength.toFixed(2)}</strong><p>近似95%範囲：{formatDrift(fitA.intervalLow)} ～ {formatDrift(fitA.intervalHigh)}</p></article>
-              <article><span>0.8 vs 1.6秒</span><b>{formatDrift(fitB.drift)}</b><strong>|v| = {fitB.evidenceStrength.toFixed(2)}</strong><p>近似95%範囲：{formatDrift(fitB.intervalLow)} ～ {formatDrift(fitB.intervalHigh)}</p></article>
-            </div>
-            <p className="fitReadout">{evidenceMessage} <b>|v|</b> が大きいほど、この固定スケールDDMではGo／No-goの証拠が速く分かれることを表します。</p>
-            <details className="modelDetails"><summary>集計DDMの前提を見る</summary><p><code>dx = ±v dt + dW</code>。長い刺激を <code>+v</code>、短い刺激を <code>−v</code> とし、<code>a=1</code>、<code>z=0.5</code>、<code>σ=1</code>、<code>t₀=100 ms</code>を固定しています。No-goは下側境界または刺激終了後1.2秒までの未到達を含む打ち切りデータです。異なる参加者の個人差を分けて推定する階層モデルではありません。</p></details>
-          </section>}
-
-          <section className="sessionList">
-            <div><span>IMPORTED FILES</span><button className="secondary" onClick={() => { setSessions([]); setMessages([]); }}>集計をクリア</button></div>
-            <ul>{sessions.map(session => <li key={session.fileName}><b>{session.participantId}</b><span>{session.fileName}</span><small>本試行 {session.trials.length} 試行</small><button onClick={() => setSessions(current => current.filter(item => item.fileName !== session.fileName))}>除く</button></li>)}</ul>
-          </section>
-          <div className="resultActions"><a className="secondary" href={HOME_HREF}>課題ページへ戻る</a><button className="start" onClick={exportSummary}>集計CSVを保存 <span>↓</span></button></div>
-        </>}
-      </section>
-      <footer><span>IMPORT</span><i /> <span>AGGREGATE</span><i /> <span>MODEL</span><b>複数の行動から見えない計算へ</b></footer>
+      {phase === "results" && <section className="comparisonResults">
+        <div className="eyebrow"><span>YOUR SERIAL-COMPARISON RESULTS</span><i /></div>
+        <div className="resultTitle"><div><p>直前の刺激と比べる時間判断</p><h1>比率ごとの<br /><em>証拠の進み方</em></h1></div><div className="score"><b>{overallAccuracy}</b><span>%<br />ACCURACY</span></div></div>
+        <div className="serialResultTable"><div className="tableHead"><span>比率</span><b>正答率</b><b>RT中央値</b><b>|v|</b></div>{fits.map(({ ratio, summary, fit }) => <div key={ratio}><span><b>{ratio}倍</b><small>{summary.count} 比較</small></span><b>{summary.accuracy}%</b><b>{summary.medianRt === null ? "—" : summary.medianRt + " ms"}</b><b>{fit ? fit.evidenceStrength.toFixed(2) : "—"}</b></div>)}</div>
+        <div className="serialDdm"><span>2-BOUNDARY DDM</span><h2>両方の選択と反応時間を使って推定。</h2><p>上側の境界を「今回の方が長い」、下側を「今回の方が短い」とし、比率ごとにドリフト率を別々に推定します。<b>|v|</b> が大きいほど、正しい選択に向かう証拠が速く進むことを示します。</p><div>{fits.map(({ ratio, fit }) => <article key={ratio}><span>{ratio}倍</span><b>{fit ? formatComparisonDrift(fit.drift) : "—"}</b><strong>{fit ? "|v| = " + fit.evidenceStrength.toFixed(2) : "データなし"}</strong><small>{fit ? "近似95%範囲：" + formatComparisonDrift(fit.intervalLow) + " ～ " + formatComparisonDrift(fit.intervalHigh) : ""}</small></article>)}</div><p className="fitReadout">本試行72比較でも、比率ごとの個人推定は探索的な値です。複数参加者のCSVを同じ条件内でまとめると、比率差をより安定して調べられます。</p></div>
+        <details><summary>試行ごとのデータを見る</summary><div className="tableWrap"><table><thead><tr><th>比較</th><th>前</th><th>今回</th><th>比率</th><th>回答</th><th>結果</th><th>RT</th></tr></thead><tbody>{trials.map(trial => <tr key={trial.block + "-" + trial.index}><td>{trial.index}</td><td>{trial.previousDuration / 1000}s</td><td>{trial.currentDuration / 1000}s</td><td>{trial.ratio}倍</td><td>{trial.response ?? "—"}</td><td className={trial.outcome === "correct" ? "good" : "bad"}>{trial.outcome}</td><td>{trial.rtFromOffset === null ? "—" : trial.rtFromOffset + " ms"}</td></tr>)}</tbody></table></div></details>
+        <div className="resultActions"><a className="secondary" href={HOME_HREF}>課題選択へ戻る</a><button className="secondary" onClick={exportCsv}>CSVを保存</button><button className="start" onClick={reset}>もう一度挑戦 <span>↻</span></button></div>
+      </section>}
+      <footer><span>REMEMBER</span><i /> <span>COMPARE</span><i /> <span>MODEL</span><b>連続する行動から見えない計算へ</b></footer>
     </main>
   );
 }
