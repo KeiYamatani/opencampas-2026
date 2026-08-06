@@ -138,10 +138,6 @@ export default function ComparisonPage() {
     stimulusOnsetRef.current = nowTimestamp();
     setPhase("reference");
     beep(520, 70);
-    timerRef.current = setTimeout(() => {
-      stimulusOffsetRef.current = nowTimestamp();
-      setPhase("waiting");
-    }, referenceDuration);
   }, [beep, stimulusSequence]);
 
   const finishTrial = useCallback((response: ComparisonResponse | null) => {
@@ -228,6 +224,17 @@ export default function ComparisonPage() {
     timerRef.current = setTimeout(() => setCountdown(value => value - 1), 700);
     return clearTimer;
   }, [beginReference, clearTimer, countdown, phase]);
+
+  useEffect(() => {
+    if (phase !== "reference") return;
+    const referenceDuration = stimulusSequence[0];
+    if (!referenceDuration) return;
+    const referenceTimer = setTimeout(() => {
+      stimulusOffsetRef.current = nowTimestamp();
+      setPhase("waiting");
+    }, referenceDuration);
+    return () => clearTimeout(referenceTimer);
+  }, [phase, stimulusSequence]);
 
   const chooseResponse = useCallback((response: ComparisonResponse) => {
     if (phase === "response") finishTrial(response);
