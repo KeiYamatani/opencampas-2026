@@ -5,8 +5,8 @@ import { fitSymmetricDdm, formatDrift, type DdmObservation } from "../lib/ddm";
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const HOME_HREF = BASE_PATH ? BASE_PATH + "/" : "/";
-const ANALYSIS_HREF = BASE_PATH + "/analysis";
-const SERIAL_COMPARISON_HREF = BASE_PATH + "/comparison";
+const ANALYSIS_HREF = BASE_PATH + "/analysis/";
+const SERIAL_COMPARISON_HREF = BASE_PATH + "/comparison/";
 const PARTICIPANT_URL = process.env.NEXT_PUBLIC_PARTICIPANT_URL ?? "https://keiyamatani.github.io/opencampas-2026/";
 const QR_IMAGE_URL = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&format=svg&margin=0&data=" + encodeURIComponent(PARTICIPANT_URL);
 
@@ -480,13 +480,13 @@ export default function Home() {
           <p className="lead">行動と反応時間から、見えない脳内の判断過程を推理します。取り組みたい課題を選んでください。</p>
           <div className="taskPicker">
             <article>
-              <span>課題 1 ／ GO・NO-GO</span><h2>0.8秒は長い？短い？</h2><p>長い刺激では押し、短い刺激では待ちます。同じ0.8秒の役割が、比較する相手によって入れ替わります。</p>
+              <span className="taskLabel"><b>課題 1</b><i>GO・NO-GO</i></span><h2>0.8秒は長い？短い？</h2><p>長い刺激では押し、短い刺激では待ちます。同じ0.8秒の役割が、比較する相手によって入れ替わります。</p>
               <div className="taskMiniRules"><b>0.2 vs 0.8秒</b><i>→</i><b>0.8 vs 1.6秒</b></div>
               <label><small>参加者ID（任意）</small><input value={participant} onChange={event => setParticipant(event.target.value)} placeholder="例：A12" maxLength={20} /></label>
               <button className="start" onClick={() => { setCurrentRound("a"); setCurrentBlock("practice"); setPhase("roundIntro"); }}>この課題をはじめる <span>→</span></button>
             </article>
             <a href={SERIAL_COMPARISON_HREF}>
-              <span>課題 2 ／ 連続比較</span><h2>今回の刺激は、前より長い？</h2><p>0.2、0.4、0.8、1.6秒が連続して現れます。直前の刺激と比べ、今回が長いか短いかを毎回選びます。</p>
+              <span className="taskLabel"><b>課題 2</b><i>連続比較</i></span><h2>今回の刺激は、前より長い？</h2><p>0.2、0.4、0.8、1.6秒が連続して現れます。直前の刺激と比べ、今回が長いか短いかを毎回選びます。</p>
               <div className="taskMiniRules"><b>2倍</b><i>／</i><b>4倍</b><i>／</i><b>8倍</b></div>
               <strong>この課題をはじめる　→</strong>
             </a>
