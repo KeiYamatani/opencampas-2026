@@ -517,7 +517,7 @@ export default function Home() {
           <div className={"stage " + phase}>
             <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
             {phase === "countdown" && <div className="count"><span>{currentBlock === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
-            {phase === "waiting" && <div className="fixation"><b>+</b><span>次の試行を準備中</span></div>}
+            {phase === "waiting" && <div className="fixation"><b>+</b><span>十字の注視点を見て待つ</span></div>}
             {phase === "fixation" && <div className="fixation" role="status"><b>+</b><span>十字の注視点を見て待つ</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
             {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → 押す</b><span>SPACEキー または このボタン</span></button><small>短いと思ったら、何もしない</small></div>}
