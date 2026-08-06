@@ -19,10 +19,10 @@ export const DDM_SETTINGS = {
   boundary: 1,
   start: 0.5,
   noise: 1,
-  // Fixed residual time after the stimulus ends; responses can begin immediately.
-  nonDecisionMs: 100,
-  // Response deadline measured from stimulus offset.
-  responseWindowMs: 1200,
+  // Fixed residual time after the stimulus ends: 0.5 s waiting + 0.1 s motor time.
+  nonDecisionMs: 600,
+  // Total deadline measured from stimulus offset: 0.5 s waiting + 1.2 s response window.
+  responseWindowMs: 1700,
 } as const;
 
 const GRID_STEP = 0.05;
