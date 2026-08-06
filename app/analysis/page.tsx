@@ -5,6 +5,7 @@ import { fitSymmetricDdm, formatDrift, type DdmObservation } from "../../lib/ddm
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const HOME_HREF = BASE_PATH ? BASE_PATH + "/" : "/";
+const SUPPORTED_TASK_VERSION = "immediate-response-v1";
 
 type RoundId = "a" | "b";
 type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
@@ -82,11 +83,13 @@ function parseSession(fileName: string, text: string): ImportedSession {
   if (rows.length < 2) throw new Error("試行データが見つかりません。");
   const headers = rows[0].map(header => header.replace(/^\uFEFF/, "").trim());
   const column = (name: string) => headers.indexOf(name);
-  const required = ["round", "trial_block", "trial_type", "response", "outcome", "rt_from_offset"];
+  const required = ["task_version", "round", "trial_block", "trial_type", "response", "outcome", "rt_from_offset"];
   const missing = required.filter(name => column(name) === -1);
   if (missing.length) throw new Error("このCSVは課題の出力形式ではありません（不足：" + missing.join(", ") + "）。");
 
   const valueAt = (row: string[], name: string) => row[column(name)]?.trim() ?? "";
+  const taskVersion = valueAt(rows[1], "task_version");
+  if (taskVersion !== SUPPORTED_TASK_VERSION) throw new Error("現在の即時回答版（" + SUPPORTED_TASK_VERSION + "）のCSVではありません。");
   const participantColumn = column("participant_id");
   const participantId = participantColumn === -1 ? "匿名" : (rows[1][participantColumn]?.trim() || "匿名");
   const trials: ImportedTrial[] = [];
@@ -256,7 +259,7 @@ export default function AnalysisPage() {
               <article><span>0.8 vs 1.6秒</span><b>{formatDrift(fitB.drift)}</b><strong>|v| = {fitB.evidenceStrength.toFixed(2)}</strong><p>近似95%範囲：{formatDrift(fitB.intervalLow)} ～ {formatDrift(fitB.intervalHigh)}</p></article>
             </div>
             <p className="fitReadout">{evidenceMessage} <b>|v|</b> が大きいほど、この固定スケールDDMではGo／No-goの証拠が速く分かれることを表します。</p>
-            <details className="modelDetails"><summary>集計DDMの前提を見る</summary><p><code>dx = ±v dt + dW</code>。長い刺激を <code>+v</code>、短い刺激を <code>−v</code> とし、<code>a=1</code>、<code>z=0.5</code>、<code>σ=1</code>、<code>t₀=600 ms</code>（回答待機0.5秒を含む）を固定しています。No-goは下側境界または刺激終了後1.7秒までの未到達を含む打ち切りデータです。異なる参加者の個人差を分けて推定する階層モデルではありません。</p></details>
+            <details className="modelDetails"><summary>集計DDMの前提を見る</summary><p><code>dx = ±v dt + dW</code>。長い刺激を <code>+v</code>、短い刺激を <code>−v</code> とし、<code>a=1</code>、<code>z=0.5</code>、<code>σ=1</code>、<code>t₀=100 ms</code>を固定しています。No-goは下側境界または刺激終了後1.2秒までの未到達を含む打ち切りデータです。異なる参加者の個人差を分けて推定する階層モデルではありません。</p></details>
           </section>}
 
           <section className="sessionList">
