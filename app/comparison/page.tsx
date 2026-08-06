@@ -276,12 +276,17 @@ export default function ComparisonPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const mainTrials = trials.filter(trial => trial.block === "main");
-  const fits = useMemo(() => ([2, 4, 8] as Ratio[]).map(ratio => ({
-    ratio,
-    summary: ratioSummary(trials, ratio),
-    fit: fitComparisonDdm(mainTrials.filter(trial => trial.ratio === ratio)),
-  })), [mainTrials, trials]);
+  const mainTrials = useMemo(() => trials.filter(trial => trial.block === "main"), [trials]);
+  // DDM fitting is computationally intensive.  Do it once the task has ended,
+  // not while the participant needs responsive buttons during the main block.
+  const fits = useMemo(() => {
+    if (phase !== "results") return [];
+    return ([2, 4, 8] as Ratio[]).map(ratio => ({
+      ratio,
+      summary: ratioSummary(trials, ratio),
+      fit: fitComparisonDdm(mainTrials.filter(trial => trial.ratio === ratio)),
+    }));
+  }, [mainTrials, phase, trials]);
   const overallAccuracy = mainTrials.length ? Math.round(mainTrials.filter(trial => trial.outcome === "correct").length / mainTrials.length * 100) : 0;
 
   const exportCsv = () => {
