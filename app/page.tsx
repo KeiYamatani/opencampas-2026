@@ -9,7 +9,7 @@ const ANALYSIS_HREF = BASE_PATH + "/analysis";
 const PARTICIPANT_URL = process.env.NEXT_PUBLIC_PARTICIPANT_URL ?? "https://keiyamatani.github.io/opencampas-2026/";
 const QR_IMAGE_URL = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&format=svg&margin=0&data=" + encodeURIComponent(PARTICIPANT_URL);
 
-type Phase = "intro" | "roundIntro" | "countdown" | "waiting" | "fixation" | "stimulus" | "responseDelay" | "response" | "feedback" | "roundComplete" | "results";
+type Phase = "intro" | "roundIntro" | "countdown" | "waiting" | "fixation" | "stimulus" | "response" | "feedback" | "roundComplete" | "results";
 type RoundId = "a" | "b";
 type Block = "practice" | "main";
 type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
@@ -53,10 +53,10 @@ type AggregateRecord = {
 const PRACTICE_TOTAL = 4;
 const MAIN_TOTAL = 14;
 const FIXATION_DURATION = 1000;
-const STIMULUS_TO_RESPONSE_INTERVAL = 500;
 const RESPONSE_WINDOW = 1200;
 const GO_DISPLAY_DURATION = 1000;
-const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v2";
+const TASK_VERSION = "immediate-response-v1";
+const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v3";
 const ROUNDS = {
   a: {
     label: "Round 1",
@@ -250,7 +250,7 @@ export default function Home() {
     const fixationOffset = fixationOffsetRef.current ?? fixationOnset + FIXATION_DURATION;
     const stimulusOnset = stimulusOnsetRef.current ?? nowTimestamp();
     const stimulusOffset = stimulusOffsetRef.current ?? nowTimestamp();
-    const responseWindowOnset = responseWindowOnsetRef.current ?? stimulusOffset + STIMULUS_TO_RESPONSE_INTERVAL;
+    const responseWindowOnset = responseWindowOnsetRef.current ?? stimulusOffset;
     const trialType = planned.duration === roundConfig.long ? "go" : "no_go";
     const outcome: Outcome = trialType === "go"
       ? responded ? "hit" : "miss"
@@ -303,7 +303,9 @@ export default function Home() {
     beep(520, 70);
     timerRef.current = setTimeout(() => {
       stimulusOffsetRef.current = nowTimestamp();
-      setPhase("responseDelay");
+      responseWindowOnsetRef.current = stimulusOffsetRef.current;
+      setPhase("response");
+      timerRef.current = setTimeout(() => finishTrial(false), RESPONSE_WINDOW);
     }, plan[trialIndex].duration);
   }, [beep, finishTrial, plan, trialIndex]);
 
@@ -321,16 +323,6 @@ export default function Home() {
     }, FIXATION_DURATION);
     return () => clearTimeout(fixationTimer);
   }, [beginStimulus, phase]);
-
-  useEffect(() => {
-    if (phase !== "responseDelay") return;
-    const responseDelayTimer = setTimeout(() => {
-      responseWindowOnsetRef.current = nowTimestamp();
-      setPhase("response");
-      timerRef.current = setTimeout(() => finishTrial(false), RESPONSE_WINDOW);
-    }, STIMULUS_TO_RESPONSE_INTERVAL);
-    return () => clearTimeout(responseDelayTimer);
-  }, [finishTrial, phase]);
 
   useEffect(() => {
     if (phase !== "countdown") return;
@@ -421,12 +413,13 @@ export default function Home() {
 
   const exportCsv = () => {
     const header = [
-      "participant_id", "round", "comparison", "trial_block", "trial", "stimulus_duration",
+      "participant_id", "task_version", "round", "comparison", "trial_block", "trial", "stimulus_duration",
       "trial_type", "correct_action", "response", "outcome", "fixation_onset", "fixation_offset", "stimulus_onset", "stimulus_offset", "response_window_onset",
       "response_timestamp", "rt_from_onset", "rt_from_offset", "rt_from_response_window", "timeout_duration",
     ].join(",") + "\n";
     const rows = trials.map(trial => [
       participant || "anonymous",
+      TASK_VERSION,
       trial.round,
       ROUNDS[trial.round].comparison,
       trial.block,
@@ -456,7 +449,7 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  const active = ["countdown", "waiting", "fixation", "stimulus", "responseDelay", "response", "feedback"].includes(phase);
+  const active = ["countdown", "waiting", "fixation", "stimulus", "response", "feedback"].includes(phase);
   const aggregateA = aggregate(aggregateRecords, "a");
   const aggregateB = aggregate(aggregateRecords, "b");
   const isPracticeComplete = phase === "roundComplete" && currentBlock === "practice";
@@ -504,10 +497,10 @@ export default function Home() {
         <section className="roundIntro">
           <div className="eyebrow"><span>{config.label.toUpperCase()}</span><i /></div>
           <h1>{config.comparison}<br /><em>{config.role}</em></h1>
-          <p className="lead">十字の注視点を1.0秒見たあとに刺激が出ます。刺激が消えたら0.5秒待ち、回答開始後に長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
+          <p className="lead">十字の注視点を1.0秒見たあとに刺激が出ます。刺激が消えたらすぐに、長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
           {currentRound === "b" && <div className="flipNotice">今度は 0.8秒が「短い」です。</div>}
           <div className="roundRule"><span>短い {config.short / 1000}秒 → NO-GO</span><b>長い {config.long / 1000}秒 → SPACE / TAP</b></div>
-          <p className="trialSequence">＋ 注視点 <b>1.0秒</b>　→　刺激　→　＋ <b>0.5秒</b>　→　回答</p>
+          <p className="trialSequence">＋ 注視点 <b>1.0秒</b>　→　刺激　→　回答</p>
           <button className="start" onClick={() => beginBlock("practice")}>練習 {PRACTICE_TOTAL}試行をはじめる <span>→</span></button>
         </section>
       )}
@@ -522,11 +515,10 @@ export default function Home() {
             {phase === "waiting" && <div className="fixation"><b>+</b><span>次の試行を準備中</span></div>}
             {phase === "fixation" && <div className="fixation" role="status"><b>+</b><span>十字の注視点を見て待つ</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
-            {phase === "responseDelay" && <div className="postStimulusFixation" role="status"><b>+</b><span>刺激終了 — そのまま待つ</span></div>}
             {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → 押す</b><span>SPACEキー または このボタン</span></button><small>短いと思ったら、何もしない</small></div>}
             {phase === "feedback" && <div className={"feedback " + (feedback === "正解！" ? "ok" : "ng")}>{feedback}</div>}
           </div>
-          <div className="experimentFoot"><p>{phase === "fixation" ? <><b>十字の注視点：待機</b><br />そのまま見て、次の刺激を待ちます。</> : phase === "stimulus" ? <><b>刺激提示中：観察</b><br />刺激が消えるまで、まだ押さないでください。</> : phase === "responseDelay" ? <><b>刺激終了後の待機</b><br />0.5秒後に回答ボタンが出ます。</> : phase === "response" ? <><b>回答開始：判断</b><br />長いと思ったときだけ、大きいボタンを押してください。</> : <><b>回答は刺激終了の0.5秒後から</b><br />回答窓は開始後 {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</>}</p><button onClick={resetExperiment}>中止する</button></div>
+          <div className="experimentFoot"><p>{phase === "fixation" ? <><b>十字の注視点：待機</b><br />そのまま見て、次の刺激を待ちます。</> : phase === "stimulus" ? <><b>刺激提示中：観察</b><br />刺激が消えるまで、まだ押さないでください。</> : phase === "response" ? <><b>回答開始：判断</b><br />長いと思ったときだけ、大きいボタンを押してください。</> : <><b>回答は刺激終了と同時に開始</b><br />回答窓は {RESPONSE_WINDOW / 1000} 秒です。刺激提示中の入力は記録しません。</>}</p><button onClick={resetExperiment}>中止する</button></div>
         </section>
       )}
 
@@ -590,7 +582,7 @@ export default function Home() {
               <article><b>|v| が大きい</b><p>証拠がどちらかの判断に届きやすい状態。押す／待つの区別がはっきりします。</p></article>
               <article><b>|v| が小さい</b><p>証拠が揺れやすく、どちらにするか決まりにくい状態。誤反応や遅い反応が増えると予想されます。</p></article>
             </div>
-            <details className="modelDetails"><summary>研究用の推定方法を見る</summary><p>ボタンを押した割合・押したときのRT・刺激終了後1.7秒までに押さなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。最初の0.5秒は回答を待つ時間です。<code>dx = ±v dt + dW</code> とし、長い刺激を <code>+v</code>（Go方向）、短い刺激を <code>−v</code>（No-go方向）に固定しています。境界 <code>a=1</code>、開始位置 <code>z=0.5</code>、ノイズ <code>σ=1</code>、非決定時間 <code>t₀=600 ms</code>は二条件で共通です。したがって、<b>絶対値はこの固定スケール内での値</b>であり、二条件の <code>|v|</code> を比較するために使います。各Roundは本試行 {MAIN_TOTAL} 試行なので、範囲が広いときは参加者全体のデータで確かめます。</p></details>
+            <details className="modelDetails"><summary>研究用の推定方法を見る</summary><p>ボタンを押した割合・押したときのRT・刺激終了後1.2秒までに押さなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。<code>dx = ±v dt + dW</code> とし、長い刺激を <code>+v</code>（Go方向）、短い刺激を <code>−v</code>（No-go方向）に固定しています。境界 <code>a=1</code>、開始位置 <code>z=0.5</code>、ノイズ <code>σ=1</code>、非決定時間 <code>t₀=100 ms</code>は二条件で共通です。したがって、<b>絶対値はこの固定スケール内での値</b>であり、二条件の <code>|v|</code> を比較するために使います。各Roundは本試行 {MAIN_TOTAL} 試行なので、範囲が広いときは参加者全体のデータで確かめます。</p></details>
           </div>
           <div className="aggregatePanel">
             <span>この展示端末の参加者全体</span>
