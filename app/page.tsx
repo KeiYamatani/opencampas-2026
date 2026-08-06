@@ -9,7 +9,7 @@ const ANALYSIS_HREF = BASE_PATH + "/analysis";
 const PARTICIPANT_URL = process.env.NEXT_PUBLIC_PARTICIPANT_URL ?? "https://keiyamatani.github.io/opencampas-2026/";
 const QR_IMAGE_URL = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&format=svg&margin=0&data=" + encodeURIComponent(PARTICIPANT_URL);
 
-type Phase = "intro" | "prediction" | "roundIntro" | "countdown" | "waiting" | "fixation" | "stimulus" | "responseDelay" | "response" | "feedback" | "roundComplete" | "results";
+type Phase = "intro" | "roundIntro" | "countdown" | "waiting" | "fixation" | "stimulus" | "responseDelay" | "response" | "feedback" | "roundComplete" | "results";
 type RoundId = "a" | "b";
 type Block = "practice" | "main";
 type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
@@ -173,17 +173,27 @@ function terminalObservations(records: AggregateRecord[], round: RoundId): DdmOb
   return records.flatMap(record => record.ddmTrials?.[round] ?? []);
 }
 
-function DdmSketch({ round }: { round: RoundId }) {
-  const strong = round === "a";
-  const path = strong
-    ? "M25 116 C55 107,68 96,84 85 S117 54,145 32"
-    : "M25 116 C45 105,58 125,72 102 S92 118,108 83 S126 103,145 55";
+function DdmIllustration() {
   return (
-    <svg className="ddmSketch" viewBox="0 0 170 145" aria-label={strong ? "証拠が進みやすい軌跡" : "揺れながら進む軌跡"}>
-      <line x1="10" x2="160" y1="23" y2="23" /><line x1="10" x2="160" y1="122" y2="122" />
-      <path d={path} /><circle cx="25" cy="116" r="4" />
-      <text x="10" y="16">GO</text><text x="10" y="140">NO-GO</text>
-    </svg>
+    <div className="ddmIllustration" role="img" aria-label="行動データから、証拠がたまってGoまたはNo-goを決めるモデルを使い、証拠の進みやすさを推定する図">
+      <article>
+        <span>① 行動を測る</span><b>押す？ 待つ？</b>
+        <div className="actionIllustration"><i>長い → 押す</i><em>または</em><i className="wait">短い → 待つ</i></div>
+        <small>反応の有無と、押すまでの時間を記録</small>
+      </article>
+      <div className="ddmArrow" aria-hidden="true">→</div>
+      <article>
+        <span>② 見えない過程を仮定</span><b>証拠がたまる</b>
+        <div className="accumulatorIllustration"><strong>Go：押す</strong><i /><b>● 開始</b><em>証拠が揺れながら進む</em><strong>No-go：待つ</strong></div>
+        <small>どちらかの線に届くと判断する、と考える</small>
+      </article>
+      <div className="ddmArrow" aria-hidden="true">→</div>
+      <article>
+        <span>③ もっとも合う値を探す</span><b>drift rate</b>
+        <div className="driftIllustration"><i><b>|v| 大</b><small>早く分かれる</small></i><i><b>|v| 小</b><small>揺れて迷いやすい</small></i></div>
+        <small>実際の行動に最も近い「進みやすさ」</small>
+      </article>
+    </div>
   );
 }
 
@@ -192,7 +202,6 @@ export default function Home() {
   const [countdown, setCountdown] = useState(3);
   const [currentRound, setCurrentRound] = useState<RoundId>("a");
   const [currentBlock, setCurrentBlock] = useState<Block>("practice");
-  const [prediction, setPrediction] = useState<RoundId | null>(null);
   const [plan, setPlan] = useState<TrialPlan[]>([]);
   const [trialIndex, setTrialIndex] = useState(0);
   const [trials, setTrials] = useState<Trial[]>([]);
@@ -404,7 +413,6 @@ export default function Home() {
     savedResultRef.current = false;
     setCurrentRound("a");
     setCurrentBlock("practice");
-    setPrediction(null);
     setTrials([]);
     setPlan([]);
     setPhase("intro");
@@ -486,25 +494,8 @@ export default function Home() {
           </div>
           <div className="startRow">
             <label><span>参加者ID（任意）</span><input value={participant} onChange={event => setParticipant(event.target.value)} placeholder="例：A12" maxLength={20} /></label>
-            <button className="start" onClick={() => setPhase("prediction")}>予想してはじめる <span>→</span></button>
-            <p><b>次の画面で予想を1つ選びます。</b> 各Round：練習 {PRACTICE_TOTAL}試行 → 本試行 {MAIN_TOTAL}試行 ／ 回答は刺激終了後のみ</p>
-          </div>
-        </section>
-      )}
-
-      {phase === "prediction" && (
-        <section className="prediction">
-          <div className="eyebrow"><span>PREDICT FIRST</span><i /></div>
-          <h1>どちらが<br /><em>見分けやすい</em>？</h1>
-          <p className="lead">長い方を押す課題です。比率はまだ見せません。</p>
-          <div className="predictionGrid">
-            <button className={prediction === "a" ? "selected" : ""} onClick={() => setPrediction("a")}><span>問題 A</span><b>0.2 秒 vs 0.8 秒</b><small>時間差：0.6 秒</small></button>
-            <button className={prediction === "b" ? "selected" : ""} onClick={() => setPrediction("b")}><span>問題 B</span><b>0.8 秒 vs 1.6 秒</b><small>時間差：0.8 秒</small></button>
-          </div>
-          <p className="choicePrompt" aria-live="polite">{prediction ? "選択済みです。Round 1へ進めます。" : "まず問題Aまたは問題Bを1つ選んでください。"}</p>
-          <div className="resultActions">
-            <button className="secondary" onClick={() => setPhase("intro")}>戻る</button>
-            <button className="start" disabled={!prediction} onClick={() => { setCurrentRound("a"); setCurrentBlock("practice"); setPhase("roundIntro"); }}>Round 1へ <span>→</span></button>
+            <button className="start" onClick={() => { setCurrentRound("a"); setCurrentBlock("practice"); setPhase("roundIntro"); }}>Round 1をはじめる <span>→</span></button>
+            <p>各Round：練習 {PRACTICE_TOTAL}試行 → 本試行 {MAIN_TOTAL}試行 ／ 回答は刺激終了後のみ</p>
           </div>
         </section>
       )}
@@ -529,7 +520,7 @@ export default function Home() {
             <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
             {phase === "countdown" && <div className="count"><span>{currentBlock === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
             {phase === "waiting" && <div className="fixation"><b>+</b><span>次の試行を準備中</span></div>}
-            {phase === "fixation" && <div className="fixation ready" role="status"><b>+</b><span>十字の注視点を見て待つ</span></div>}
+            {phase === "fixation" && <div className="fixation" role="status"><b>+</b><span>十字の注視点を見て待つ</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
             {phase === "responseDelay" && <div className="postStimulusFixation" role="status"><b>+</b><span>刺激終了 — そのまま待つ</span></div>}
             {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → 押す</b><span>SPACEキー または このボタン</span></button><small>短いと思ったら、何もしない</small></div>}
@@ -593,12 +584,13 @@ export default function Home() {
             <p>あなたの結果は予想と合いましたか？ 変化量そのものだけでなく、もとの大きさに対してどれだけ変わったかを使って区別している可能性があります。</p>
           </div>
           <div className="ddmSection">
-            <div><span>MODEL DETAILS</span><h2>ドリフト率は、反応と無反応を同時に説明する値。</h2><p>ボタンを押した割合・押したときのRT・刺激終了後1.7秒までに押さなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。最初の0.5秒は回答を待つ時間です。各Roundは本試行 {MAIN_TOTAL} 試行なので、範囲が広いときは参加者全体のデータで確かめます。</p></div>
-            <div className="ddmGrid">
-              <article><DdmSketch round="a" /><b>0.2 vs 0.8秒</b><p>4倍違う → 予測：|v| が大きい</p></article>
-              <article><DdmSketch round="b" /><b>0.8 vs 1.6秒</b><p>2倍違う → 予測：|v| が小さい</p></article>
+            <div><span>HOW THE MODEL WORKS</span><h2>行動から、決めるまでの「証拠の進み方」を推理する。</h2><p>脳の中は直接見えません。そこで、いつ押したか・どれくらい押さなかったかを手がかりにして、見えない証拠がどのくらい速く判断へ向かったかをモデルで探します。</p></div>
+            <DdmIllustration />
+            <div className="ddmConceptGrid">
+              <article><b>|v| が大きい</b><p>証拠がどちらかの判断に届きやすい状態。押す／待つの区別がはっきりします。</p></article>
+              <article><b>|v| が小さい</b><p>証拠が揺れやすく、どちらにするか決まりにくい状態。誤反応や遅い反応が増えると予想されます。</p></article>
             </div>
-            <details className="modelDetails"><summary>このDDM推定の前提を見る</summary><p><code>dx = ±v dt + dW</code> とし、長い刺激を <code>+v</code>（Go方向）、短い刺激を <code>−v</code>（No-go方向）に固定しています。境界 <code>a=1</code>、開始位置 <code>z=0.5</code>、ノイズ <code>σ=1</code>、非決定時間 <code>t₀=600 ms</code>（回答待機0.5秒を含む）は二条件で共通です。したがって、<b>絶対値はこの固定スケール内での値</b>であり、二条件の <code>|v|</code> を比較するために使います。No-goは「下側境界に達した」または「刺激終了後1.7秒までにGo境界へ達しなかった」打ち切りデータとして扱います。</p></details>
+            <details className="modelDetails"><summary>研究用の推定方法を見る</summary><p>ボタンを押した割合・押したときのRT・刺激終了後1.7秒までに押さなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。最初の0.5秒は回答を待つ時間です。<code>dx = ±v dt + dW</code> とし、長い刺激を <code>+v</code>（Go方向）、短い刺激を <code>−v</code>（No-go方向）に固定しています。境界 <code>a=1</code>、開始位置 <code>z=0.5</code>、ノイズ <code>σ=1</code>、非決定時間 <code>t₀=600 ms</code>は二条件で共通です。したがって、<b>絶対値はこの固定スケール内での値</b>であり、二条件の <code>|v|</code> を比較するために使います。各Roundは本試行 {MAIN_TOTAL} 試行なので、範囲が広いときは参加者全体のデータで確かめます。</p></details>
           </div>
           <div className="aggregatePanel">
             <span>この展示端末の参加者全体</span>
