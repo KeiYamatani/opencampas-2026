@@ -5,7 +5,7 @@ import { fitSymmetricDdm, formatDrift, type DdmObservation } from "../../lib/ddm
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const HOME_HREF = BASE_PATH ? BASE_PATH + "/" : "/";
-const SUPPORTED_TASK_VERSION = "response-delay-500ms-v2";
+const SUPPORTED_TASK_VERSION = "response-delay-500ms-equal-difference-v3";
 
 type RoundId = "a" | "b";
 type Outcome = "hit" | "miss" | "correct_rejection" | "false_alarm";
@@ -30,7 +30,7 @@ type GroupSummary = {
 
 const ROUND_LABEL: Record<RoundId, string> = {
   a: "0.2秒 vs 0.8秒",
-  b: "0.8秒 vs 1.6秒",
+  b: "1.0秒 vs 1.6秒",
 };
 
 function median(values: number[]) {
@@ -201,7 +201,7 @@ export default function AnalysisPage() {
 
   const evidenceMessage = !fitA || !fitB ? "CSVを読み込むと、二条件の推定ドリフト率を比較できます。"
     : fitA.evidenceStrength > fitB.evidenceStrength ? "この集計では、0.2 vs 0.8秒の方が |v| が大きくなりました。"
-      : fitA.evidenceStrength < fitB.evidenceStrength ? "この集計では、0.8 vs 1.6秒の方が |v| が大きくなりました。"
+      : fitA.evidenceStrength < fitB.evidenceStrength ? "この集計では、1.0 vs 1.6秒の方が |v| が大きくなりました。"
         : "この集計では、二条件の |v| は同じでした。";
 
   return (
@@ -256,10 +256,10 @@ export default function AnalysisPage() {
             <div><span>POOLED DDM ESTIMATE</span><h2>全参加者の試行をまとめて、ドリフト率を推定。</h2><p>各CSVの推定値を平均するのではなく、すべての本試行の押下率・RT・無反応を一つの尤度へ入れて推定します。</p></div>
             <div className="groupDdmGrid">
               <article><span>0.2 vs 0.8秒</span><b>{formatDrift(fitA.drift)}</b><strong>|v| = {fitA.evidenceStrength.toFixed(2)}</strong><p>近似95%範囲：{formatDrift(fitA.intervalLow)} ～ {formatDrift(fitA.intervalHigh)}</p></article>
-              <article><span>0.8 vs 1.6秒</span><b>{formatDrift(fitB.drift)}</b><strong>|v| = {fitB.evidenceStrength.toFixed(2)}</strong><p>近似95%範囲：{formatDrift(fitB.intervalLow)} ～ {formatDrift(fitB.intervalHigh)}</p></article>
+              <article><span>1.0 vs 1.6秒</span><b>{formatDrift(fitB.drift)}</b><strong>|v| = {fitB.evidenceStrength.toFixed(2)}</strong><p>近似95%範囲：{formatDrift(fitB.intervalLow)} ～ {formatDrift(fitB.intervalHigh)}</p></article>
             </div>
             <p className="fitReadout">{evidenceMessage} <b>|v|</b> が大きいほど、この固定スケールDDMではGo／No-goの証拠が速く分かれることを表します。</p>
-            <details className="modelDetails"><summary>集計DDMの前提を見る</summary><p><code>dx = ±v dt + dW</code>。長い刺激を <code>+v</code>、短い刺激を <code>−v</code> とし、<code>a=1</code>、<code>z=0.5</code>、<code>σ=1</code>、<code>t₀=600 ms</code>（回答開始前の0.5秒を含む）を固定しています。No-goは下側境界または刺激終了後1.7秒までの未到達を含む打ち切りデータです。異なる参加者の個人差を分けて推定する階層モデルではありません。</p></details>
+            <details className="modelDetails"><summary>集計DDMの前提を見る</summary><p><code>dx = ±v dt + dW</code>。長い刺激を <code>+v</code>、短い刺激を <code>−v</code> とし、<code>a=1</code>、<code>z=0.5</code>、<code>σ=1</code>、<code>t₀=600 ms</code>（回答開始前の0.5秒を含む）を固定しています。No-goは下側境界または刺激終了後2.0秒までの未到達を含む打ち切りデータです。異なる参加者の個人差を分けて推定する階層モデルではありません。</p></details>
           </section>}
 
           <section className="sessionList">
