@@ -32,6 +32,7 @@ const GRID_LIMIT = 5;
 const SERIES_TERMS = 48;
 const CDF_STEP_MS = 4;
 const EPSILON = 1e-12;
+const upperProbabilityCache = new Map<string, number>();
 
 /** First-passage density to the upper boundary of a two-choice DDM. */
 function upperBoundaryDensity(decisionTimeMs: number, drift: number) {
@@ -55,6 +56,9 @@ function upperBoundaryDensity(decisionTimeMs: number, drift: number) {
 
 function upperBoundaryProbability(decisionDeadlineMs: number, drift: number) {
   if (decisionDeadlineMs <= 0) return 0;
+  const cacheKey = decisionDeadlineMs + ":" + drift;
+  const cached = upperProbabilityCache.get(cacheKey);
+  if (cached !== undefined) return cached;
   let probability = 0;
   let previous = 0;
   for (let time = CDF_STEP_MS; time <= decisionDeadlineMs; time += CDF_STEP_MS) {
@@ -67,7 +71,9 @@ function upperBoundaryProbability(decisionDeadlineMs: number, drift: number) {
     const density = upperBoundaryDensity(decisionDeadlineMs, drift);
     probability += (previous + density) / 2 * (remainder / 1000);
   }
-  return Math.min(1 - EPSILON, Math.max(EPSILON, probability));
+  const boundedProbability = Math.min(1 - EPSILON, Math.max(EPSILON, probability));
+  upperProbabilityCache.set(cacheKey, boundedProbability);
+  return boundedProbability;
 }
 
 function logLikelihoodForDrift(observations: ComparisonObservation[], drift: number) {

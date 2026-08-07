@@ -21,8 +21,8 @@ export const DDM_SETTINGS = {
   noise: 1,
   // Fixed residual time after the stimulus ends: 0.5 s waiting + 0.1 s motor time.
   nonDecisionMs: 600,
-  // Total deadline measured from stimulus offset: 0.5 s waiting + 1.2 s response window.
-  responseWindowMs: 1700,
+  // Total deadline measured from stimulus offset: 0.5 s waiting + 1.5 s response window.
+  responseWindowMs: 2000,
 } as const;
 
 const GRID_STEP = 0.05;
