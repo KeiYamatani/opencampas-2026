@@ -55,10 +55,10 @@ const PRACTICE_TOTAL = 4;
 const MAIN_TOTAL = 14;
 const FIXATION_DURATION = 1000;
 const POST_STIMULUS_WAIT = 500;
-const RESPONSE_WINDOW = 1200;
+const RESPONSE_WINDOW = 1500;
 const GO_DISPLAY_DURATION = 1000;
-const TASK_VERSION = "response-delay-500ms-v2";
-const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v4";
+const TASK_VERSION = "response-delay-500ms-equal-difference-v3";
+const STORAGE_KEY = "neuro-decision-lab-round-aggregate-v5";
 const ROUNDS = {
   a: {
     label: "Round 1",
@@ -71,12 +71,12 @@ const ROUNDS = {
   },
   b: {
     label: "Round 2",
-    comparison: "0.8秒 vs 1.6秒",
-    short: 800,
+    comparison: "1.0秒 vs 1.6秒",
+    short: 1000,
     long: 1600,
-    absoluteDifference: 800,
-    ratio: 2,
-    role: "0.8秒は短い刺激（No-go）",
+    absoluteDifference: 600,
+    ratio: 1.6,
+    role: "1.6秒は長い刺激（Go）",
   },
 } as const;
 
@@ -124,6 +124,10 @@ function higherValueClass(value: number, comparison: number) {
 
 function lowerValueClass(value: number, comparison: number) {
   return value < comparison ? "metricBest" : "";
+}
+
+function lowerNullableValueClass(value: number | null, comparison: number | null) {
+  return value !== null && comparison !== null && value < comparison ? "metricBest" : "";
 }
 
 function csvCell(value: string | number | null) {
@@ -179,14 +183,14 @@ function DdmIllustration() {
   return (
     <div className="ddmIllustration" role="img" aria-label="行動データから、証拠がたまってGoまたはNo-goを決めるモデルを使い、証拠の進みやすさを推定する図">
       <article>
-        <span>① 行動を測る</span><b>押す？ 待つ？</b>
-        <div className="actionIllustration"><i>長い → 押す</i><em>または</em><i className="wait">短い → 待つ</i></div>
-        <small>反応の有無と、押すまでの時間を記録</small>
+        <span>① 行動を測る</span><b>タップ？ 待つ？</b>
+        <div className="actionIllustration"><i>長い → タップ</i><em>または</em><i className="wait">短い → 待つ</i></div>
+        <small>反応の有無と、タップまでの時間を記録</small>
       </article>
       <div className="ddmArrow" aria-hidden="true">→</div>
       <article>
         <span>② 見えない過程を仮定</span><b>証拠がたまる</b>
-        <div className="accumulatorIllustration"><strong>Go：押す</strong><i /><b>● 開始</b><em>証拠が揺れながら進む</em><strong>No-go：待つ</strong></div>
+        <div className="accumulatorIllustration"><strong>Go：タップ</strong><i /><b>● 開始</b><em>証拠が揺れながら進む</em><strong>No-go：待つ</strong></div>
         <small>どちらかの線に届くと判断する、と考える</small>
       </article>
       <div className="ddmArrow" aria-hidden="true">→</div>
@@ -484,8 +488,8 @@ export default function Home() {
           <p className="lead">行動と反応時間から、見えない脳内の判断過程を推理します。取り組みたい課題を選んでください。</p>
           <div className="taskPicker">
             <article>
-              <span className="taskLabel"><b>課題1</b><i>GO・NO-GO</i></span><h2>0.8秒は長い？短い？</h2><p>長い刺激では押し、短い刺激では待ちます。同じ0.8秒の役割が、比較する相手によって入れ替わります。</p>
-              <div className="taskMiniRules"><b>0.2 vs 0.8秒</b><i>→</i><b>0.8 vs 1.6秒</b></div>
+              <span className="taskLabel"><b>課題1</b><i>GO・NO-GO</i></span><h2>時間差と比率、どちらが効く？</h2><p>長い刺激なら画面をタップし、短い刺激なら待ちます。同じ0.6秒差の二条件を比べます。</p>
+              <div className="taskMiniRules"><b>0.2 vs 0.8秒</b><i>→</i><b>1.0 vs 1.6秒</b></div>
               <label><small>参加者ID（任意）</small><input value={participant} onChange={event => setParticipant(event.target.value)} placeholder="例：A12" maxLength={20} /></label>
               <button className="start" onClick={() => { setCurrentRound("a"); setCurrentBlock("practice"); setPhase("roundIntro"); }}>この課題をはじめる <span>→</span></button>
             </article>
@@ -506,9 +510,8 @@ export default function Home() {
         <section className="roundIntro">
           <div className="eyebrow"><span>{config.label.toUpperCase()}</span><i /></div>
           <h1>{config.comparison}<br /><em>{config.role}</em></h1>
-          <p className="lead">十字の注視点を1.0秒見たあとに刺激が出ます。刺激が消えて0.5秒後に、長いと思ったときだけ押します。短いと思ったときは何もしません。</p>
-          {currentRound === "b" && <div className="flipNotice">今度は 0.8秒が「短い」です。</div>}
-          <div className="roundRule"><span>短い {config.short / 1000}秒 → NO-GO</span><b>長い {config.long / 1000}秒 → SPACE / TAP</b></div>
+          <p className="lead">十字の注視点を1.0秒見たあとに刺激が出ます。刺激が消えて0.5秒後に、長いと思ったときだけ画面をタップします。短いと思ったときは何もしません。</p>
+          <div className="roundRule"><span>短い {config.short / 1000}秒 → NO-GO</span><b>長い {config.long / 1000}秒 → 画面をタップ</b></div>
           <p className="trialSequence">＋ 注視点 <b>1.0秒</b>　→　刺激　→　<b>0.5秒待機</b>　→　回答</p>
           <button className="start" onClick={() => beginBlock("practice")}>練習 {PRACTICE_TOTAL}試行をはじめる <span>→</span></button>
         </section>
@@ -525,7 +528,7 @@ export default function Home() {
             {phase === "fixation" && <div className="fixation" role="status"><b>+</b><span>十字の注視点を見て待つ</span></div>}
             {phase === "stimulus" && <div className="orb"><i /><span>WATCH — DO NOT PRESS</span></div>}
             {phase === "responseDelay" && <div className="fixation" aria-label="回答開始まで待機"><b>+</b></div>}
-            {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → 押す</b><span>SPACEキー または このボタン</span></button><small>短いと思ったら、何もしない</small></div>}
+            {phase === "response" && <div className="respond"><h2>長いと思った？</h2><button type="button" className="responseButton" onPointerDown={event => { event.preventDefault(); press(); }} onClick={press}><b>長い → タップ</b><span>このボタンをタップ</span></button><small>短いと思ったら、何もしない</small></div>}
             {phase === "feedback" && <div className={"feedback " + (feedback === "正解！" ? "ok" : "ng")}>{feedback}</div>}
           </div>
           <div className="experimentFoot"><button onClick={resetExperiment}>中止する</button></div>
@@ -544,9 +547,8 @@ export default function Home() {
       {isRoundOneComplete && (
         <section className="roundIntro">
           <div className="eyebrow"><span>ROUND 1 COMPLETE</span><i /></div>
-          <h1>次は、0.8秒が<br /><em>短く</em>なります。</h1>
-          <p className="lead">Round 2では、0.8秒と1.6秒を比べます。0.8秒はNo-goです。</p>
-          <div className="flipNotice">今度は 0.8秒が「短い」です。</div>
+          <h1>次も時間差は<br /><em>0.6秒</em>です。</h1>
+          <p className="lead">Round 2では、1.0秒と1.6秒を比べます。時間差はRound 1と同じですが、時間の比率は小さくなります。</p>
           <button className="start" onClick={() => { setCurrentRound("b"); setCurrentBlock("practice"); setPhase("roundIntro"); }}>Round 2へ <span>→</span></button>
         </section>
       )}
@@ -562,42 +564,42 @@ export default function Home() {
       {phase === "results" && (
         <section className="results">
           <div className="eyebrow"><span>YOUR RESULTS</span><i /></div>
-          <div className="resultTitle"><div><p>0.8秒の役割が変わる二つのRound</p><h1>時間差？<br /><em>それとも比率？</em></h1></div><div className="score"><b>{Math.round((summaries.a.accuracy + summaries.b.accuracy) / 2)}</b><span>%<br />MEAN ACCURACY</span></div></div>
+          <div className="resultTitle"><div><p>同じ0.6秒差で、比率が異なる二つのRound</p><h1>時間差？<br /><em>それとも比率？</em></h1></div><div className="score"><b>{Math.round((summaries.a.accuracy + summaries.b.accuracy) / 2)}</b><span>%<br />MEAN ACCURACY</span></div></div>
           {individualFitA && individualFitB && <section className="driftHero">
-            <div><span>YOUR DATA × DDM</span><h2>証拠の進み方 <em>drift rate</em></h2><p>全本試行の押下率・RT・無反応を合わせて推定した値です。<b>|v|</b> が大きいほど、Go／No-goの証拠が速く分かれました。</p></div>
+            <div><span>YOUR DATA × DDM</span><h2>証拠の進み方 <em>drift rate</em></h2><p>全本試行のタップ率・RT・無反応を合わせて推定した値です。<b>|v|</b> が大きいほど、Go／No-goの証拠が速く分かれました。</p></div>
             <div className="driftHeroGrid">
               <article className={higherValueClass(individualFitA.evidenceStrength, individualFitB.evidenceStrength)}><span>0.2 vs 0.8秒</span><b>{formatDrift(individualFitA.drift)}</b><strong>|v| = {individualFitA.evidenceStrength.toFixed(2)}</strong><small>近似95%範囲：{formatDrift(individualFitA.intervalLow)} ～ {formatDrift(individualFitA.intervalHigh)}</small></article>
-              <article className={higherValueClass(individualFitB.evidenceStrength, individualFitA.evidenceStrength)}><span>0.8 vs 1.6秒</span><b>{formatDrift(individualFitB.drift)}</b><strong>|v| = {individualFitB.evidenceStrength.toFixed(2)}</strong><small>近似95%範囲：{formatDrift(individualFitB.intervalLow)} ～ {formatDrift(individualFitB.intervalHigh)}</small></article>
+              <article className={higherValueClass(individualFitB.evidenceStrength, individualFitA.evidenceStrength)}><span>1.0 vs 1.6秒</span><b>{formatDrift(individualFitB.drift)}</b><strong>|v| = {individualFitB.evidenceStrength.toFixed(2)}</strong><small>近似95%範囲：{formatDrift(individualFitB.intervalLow)} ～ {formatDrift(individualFitB.intervalHigh)}</small></article>
             </div>
           </section>}
           <div className="comparisonTable">
-            <div className="tableHead"><span>あなたの結果</span><b>0.2 vs 0.8秒</b><b>0.8 vs 1.6秒</b></div>
+            <div className="tableHead"><span>あなたの結果</span><b>0.2 vs 0.8秒</b><b>1.0 vs 1.6秒</b></div>
             <div><span>正答率 <small>高い方を強調</small></span><b className={higherValueClass(summaries.a.accuracy, summaries.b.accuracy)}>{summaries.a.accuracy}%</b><b className={higherValueClass(summaries.b.accuracy, summaries.a.accuracy)}>{summaries.b.accuracy}%</b></div>
             <div><span>Hit率 <small>高い方を強調</small></span><b className={higherValueClass(summaries.a.hitRate, summaries.b.hitRate)}>{summaries.a.hitRate}%</b><b className={higherValueClass(summaries.b.hitRate, summaries.a.hitRate)}>{summaries.b.hitRate}%</b></div>
             <div><span>False alarm率 <small>低い方を強調</small></span><b className={lowerValueClass(summaries.a.falseAlarmRate, summaries.b.falseAlarmRate)}>{summaries.a.falseAlarmRate}%</b><b className={lowerValueClass(summaries.b.falseAlarmRate, summaries.a.falseAlarmRate)}>{summaries.b.falseAlarmRate}%</b></div>
-            <div><span>Go RT 中央値 <small>速さのみを表示</small></span><b>{summaries.a.goMedianRt === null ? "—" : summaries.a.goMedianRt + " ms"}</b><b>{summaries.b.goMedianRt === null ? "—" : summaries.b.goMedianRt + " ms"}</b></div>
+            <div><span>Go RT 中央値 <small>短い方を強調</small></span><b className={lowerNullableValueClass(summaries.a.goMedianRt, summaries.b.goMedianRt)}>{summaries.a.goMedianRt === null ? "—" : summaries.a.goMedianRt + " ms"}</b><b className={lowerNullableValueClass(summaries.b.goMedianRt, summaries.a.goMedianRt)}>{summaries.b.goMedianRt === null ? "—" : summaries.b.goMedianRt + " ms"}</b></div>
             <div><span>No-go誤反応 RT 平均</span><b>{summaries.a.falseAlarmMeanRt === null ? "—" : summaries.a.falseAlarmMeanRt + " ms"}</b><b>{summaries.b.falseAlarmMeanRt === null ? "—" : summaries.b.falseAlarmMeanRt + " ms"}</b></div>
           </div>
           <p className="comparisonNote">緑はその指標だけで相対的に良い値です。反応が速いことだけでは「より良い」とは決めず、正確さとあわせて読みます。</p>
           <div className="reveal">
             <span>種明かし</span>
-            <h2>時間差が大きいのは問題B。でも比率が大きいのは問題A。</h2>
-            <div><p><b>問題 A</b><br />0.2秒 → 0.8秒<br /><strong>4倍</strong></p><p><b>問題 B</b><br />0.8秒 → 1.6秒<br /><strong>2倍</strong></p></div>
-            <p>あなたの結果は予想と合いましたか？ 変化量そのものだけでなく、もとの大きさに対してどれだけ変わったかを使って区別している可能性があります。</p>
+            <h2>時間差は同じ。でも比率は問題Aの方が大きい。</h2>
+            <div><p><b>問題 A</b><br />0.2秒 → 0.8秒<br /><strong>4倍</strong></p><p><b>問題 B</b><br />1.0秒 → 1.6秒<br /><strong>1.6倍</strong></p></div>
+            <p>二つとも時間差は0.6秒です。結果に違いがあれば、変化量そのものだけでなく、もとの大きさに対してどれだけ変わったかを使って区別している可能性があります。</p>
           </div>
           <div className="ddmSection">
             <div><span>HOW THE MODEL WORKS</span><h2>行動から、決めるまでの「証拠の進み方」を推理する。</h2><p>脳の中は直接見えません。そこで、いつ押したか・どれくらい押さなかったかを手がかりにして、見えない証拠がどのくらい速く判断へ向かったかをモデルで探します。</p></div>
             <DdmIllustration />
             <div className="ddmConceptGrid">
-              <article><b>|v| が大きい</b><p>証拠がどちらかの判断に届きやすい状態。押す／待つの区別がはっきりします。</p></article>
+              <article><b>|v| が大きい</b><p>証拠がどちらかの判断に届きやすい状態。タップ／待つの区別がはっきりします。</p></article>
               <article><b>|v| が小さい</b><p>証拠が揺れやすく、どちらにするか決まりにくい状態。誤反応や遅い反応が増えると予想されます。</p></article>
             </div>
-            <details className="modelDetails"><summary>研究用の推定方法を見る</summary><p>ボタンを押した割合・押したときのRT・刺激終了後1.7秒までに押さなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。<code>dx = ±v dt + dW</code> とし、長い刺激を <code>+v</code>（Go方向）、短い刺激を <code>−v</code>（No-go方向）に固定しています。境界 <code>a=1</code>、開始位置 <code>z=0.5</code>、ノイズ <code>σ=1</code>、非決定時間 <code>t₀=600 ms</code>（回答開始前の0.5秒を含む）は二条件で共通です。したがって、<b>絶対値はこの固定スケール内での値</b>であり、二条件の <code>|v|</code> を比較するために使います。各Roundは本試行 {MAIN_TOTAL} 試行なので、範囲が広いときは参加者全体のデータで確かめます。</p></details>
+            <details className="modelDetails"><summary>研究用の推定方法を見る</summary><p>タップした割合・タップしたときのRT・刺激終了後2.0秒までにタップしなかった試行を同時に用いた、固定スケールDDMの近似最尤推定です。<code>dx = ±v dt + dW</code> とし、長い刺激を <code>+v</code>（Go方向）、短い刺激を <code>−v</code>（No-go方向）に固定しています。境界 <code>a=1</code>、開始位置 <code>z=0.5</code>、ノイズ <code>σ=1</code>、非決定時間 <code>t₀=600 ms</code>（回答開始前の0.5秒を含む）は二条件で共通です。したがって、<b>絶対値はこの固定スケール内での値</b>であり、二条件の <code>|v|</code> を比較するために使います。各Roundは本試行 {MAIN_TOTAL} 試行なので、範囲が広いときは参加者全体のデータで確かめます。</p></details>
           </div>
           <div className="aggregatePanel">
             <span>この展示端末の参加者全体</span>
             {aggregateA && aggregateB ? <>
-              <p>{aggregateA.count}人分の端末内集計：0.2 vs 0.8秒の平均正答率 {aggregateA.accuracy}% ／ 0.8 vs 1.6秒は {aggregateB.accuracy}%</p>
+              <p>{aggregateA.count}人分の端末内集計：0.2 vs 0.8秒の平均正答率 {aggregateA.accuracy}% ／ 1.0 vs 1.6秒は {aggregateB.accuracy}%</p>
               {terminalFitA && terminalFitB && <p className="terminalFit">プールしたDDM推定（本試行 {terminalFitA.count} 試行／条件）：|v| は {terminalFitA.evidenceStrength.toFixed(2)} vs {terminalFitB.evidenceStrength.toFixed(2)}。参加者が増えるほど、個人の偶然のばらつきの影響は小さくなります。</p>}
             </> : <p>まだ端末内の集計データはありません。結果はこのブラウザ内にのみ保存され、外部へ送信されません。</p>}
           </div>
