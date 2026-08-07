@@ -6,6 +6,7 @@ import { COMPARISON_DDM_SETTINGS, fitComparisonDdm, formatComparisonDrift, type 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const HOME_HREF = BASE_PATH ? BASE_PATH + "/" : "/";
 const DURATIONS = [200, 400, 800, 1600] as const;
+const ABSOLUTE_INTERVALS = [200, 400, 600, 800, 1200, 1400] as const;
 const PRACTICE_REPEATS = { 2: 1, 4: 1, 8: 1 } as const;
 const MAIN_REPEATS = { 2: 4, 4: 6, 8: 12 } as const;
 const FIXATION_DURATION = 800;
@@ -16,6 +17,7 @@ const TASK_VERSION = "serial-comparison-v1";
 type Block = "practice" | "main";
 type Phase = "intro" | "countdown" | "reference" | "waiting" | "fixation" | "stimulus" | "response" | "feedback" | "practiceComplete" | "results";
 type Ratio = 2 | 4 | 8;
+type AbsoluteInterval = typeof ABSOLUTE_INTERVALS[number];
 type TrialOutcome = "correct" | "incorrect" | "timeout";
 type Trial = ComparisonObservation & {
   block: Block;
@@ -35,6 +37,10 @@ function nowTimestamp() {
 
 function durationRatio(first: number, second: number): Ratio {
   return Math.max(first, second) / Math.min(first, second) as Ratio;
+}
+
+function absoluteInterval(first: number, second: number): AbsoluteInterval {
+  return Math.abs(first - second) as AbsoluteInterval;
 }
 
 function shuffle<T>(items: T[]) {
@@ -287,6 +293,13 @@ export default function ComparisonPage() {
       fit: fitComparisonDdm(mainTrials.filter(trial => trial.ratio === ratio)),
     }));
   }, [mainTrials, phase, trials]);
+  const intervalFits = useMemo(() => {
+    if (phase !== "results") return [];
+    return ABSOLUTE_INTERVALS.map(interval => {
+      const observations = mainTrials.filter(trial => absoluteInterval(trial.previousDuration, trial.currentDuration) === interval);
+      return { interval, count: observations.length, fit: fitComparisonDdm(observations) };
+    });
+  }, [mainTrials, phase]);
   const overallAccuracy = mainTrials.length ? Math.round(mainTrials.filter(trial => trial.outcome === "correct").length / mainTrials.length * 100) : 0;
 
   const exportCsv = () => {
@@ -332,13 +345,13 @@ export default function ComparisonPage() {
           <div className="corner tl" /><div className="corner tr" /><div className="corner bl" /><div className="corner br" />
           {phase === "countdown" && <div className="count"><span>{block === "practice" ? "PRACTICE / GET READY" : "MAIN TASK / GET READY"}</span><b>{countdown || "GO"}</b></div>}
           {phase === "reference" && <div className="serialStimulus"><span>最初の刺激 — 覚えておく</span><div className="orb"><i /></div><small>まだ回答しません</small></div>}
-          {phase === "waiting" && <div className="fixation"><b>+</b><span>前の刺激を覚えて待つ</span></div>}
-          {phase === "fixation" && <div className="fixation"><b>+</b><span>次の刺激を見比べる</span></div>}
+          {phase === "waiting" && <div className="fixation"><b>+</b><span>十字の注視点を見て待つ</span></div>}
+          {phase === "fixation" && <div className="fixation"><b>+</b><span>十字の注視点を見て待つ</span></div>}
           {phase === "stimulus" && <div className="serialStimulus"><span>今回の刺激</span><div className="orb"><i /></div><small>まだ回答しません</small></div>}
           {phase === "response" && <div className="comparisonRespond"><h2>今回の刺激は？</h2><div className="comparisonResponseButtons"><button type="button" className="shorterButton" onPointerDown={event => { event.preventDefault(); chooseResponse("shorter"); }} onClick={() => chooseResponse("shorter")}><b>短い</b><span>← 左矢印キー</span></button><button type="button" className="longerButton" onPointerDown={event => { event.preventDefault(); chooseResponse("longer"); }} onClick={() => chooseResponse("longer")}><b>長い</b><span>右矢印キー →</span></button></div><small>直前の刺激と比べて選んでください</small></div>}
           {phase === "feedback" && <div className={"feedback " + (feedback === "正解！" ? "ok" : "ng")}>{feedback}</div>}
         </div>
-        <div className="experimentFoot"><p>{phase === "reference" ? <><b>最初の刺激</b><br />長さを覚えてください。</> : phase === "stimulus" ? <><b>今回の刺激を観察</b><br />直前の刺激と比べます。</> : phase === "response" ? <><b>回答開始</b><br />前の刺激より短いか長いかを選びます。</> : <><b>回答は今回の刺激終了直後</b><br />回答窓は {RESPONSE_WINDOW / 1000} 秒です。</>}</p><button onClick={reset}>中止する</button></div>
+        <div className="experimentFoot"><button onClick={reset}>中止する</button></div>
       </section>}
 
       {phase === "practiceComplete" && <section className="comparisonIntro"><div className="eyebrow"><span>PRACTICE COMPLETE</span><i /></div><h1>練習終了。<br /><em>本試行</em>へ進もう。</h1><p className="lead">ここからは、比率2倍・4倍・8倍の比較が各24回ずつ現れます。</p><button className="start" onClick={() => beginBlock("main")}>本試行 72比較をはじめる <span>→</span></button></section>}
@@ -347,7 +360,7 @@ export default function ComparisonPage() {
         <div className="eyebrow"><span>YOUR SERIAL-COMPARISON RESULTS</span><i /></div>
         <div className="resultTitle"><div><p>直前の刺激と比べる時間判断</p><h1>比率ごとの<br /><em>証拠の進み方</em></h1></div><div className="score"><b>{overallAccuracy}</b><span>%<br />ACCURACY</span></div></div>
         <div className="serialResultTable"><div className="tableHead"><span>比率</span><b>正答率</b><b>RT中央値</b><b>|v|</b></div>{fits.map(({ ratio, summary, fit }) => <div key={ratio}><span><b>{ratio}倍</b><small>{summary.count} 比較</small></span><b>{summary.accuracy}%</b><b>{summary.medianRt === null ? "—" : summary.medianRt + " ms"}</b><b>{fit ? fit.evidenceStrength.toFixed(2) : "—"}</b></div>)}</div>
-        <div className="serialDdm"><span>2-BOUNDARY DDM</span><h2>両方の選択と反応時間を使って推定。</h2><p>上側の境界を「今回の方が長い」、下側を「今回の方が短い」とし、比率ごとにドリフト率を別々に推定します。<b>|v|</b> が大きいほど、正しい選択に向かう証拠が速く進むことを示します。</p><div>{fits.map(({ ratio, fit }) => <article key={ratio}><span>{ratio}倍</span><b>{fit ? formatComparisonDrift(fit.drift) : "—"}</b><strong>{fit ? "|v| = " + fit.evidenceStrength.toFixed(2) : "データなし"}</strong><small>{fit ? "近似95%範囲：" + formatComparisonDrift(fit.intervalLow) + " ～ " + formatComparisonDrift(fit.intervalHigh) : ""}</small></article>)}</div><p className="fitReadout">本試行72比較でも、比率ごとの個人推定は探索的な値です。複数参加者のCSVを同じ条件内でまとめると、比率差をより安定して調べられます。</p></div>
+        <div className="serialDdm"><span>2-BOUNDARY DDM</span><h2>比率と刺激間隔、二つの見方で比較する。</h2><p>上側の境界を「今回の方が長い」、下側を「今回の方が短い」とし、条件ごとにドリフト率を推定します。<b>|v|</b> が大きいほど、正しい選択に向かう証拠が速く進むことを示します。</p><h3>時間の比率で比較</h3><div>{fits.map(({ ratio, fit }) => <article key={ratio}><span>{ratio}倍</span><b>{fit ? formatComparisonDrift(fit.drift) : "—"}</b><strong>{fit ? "|v| = " + fit.evidenceStrength.toFixed(2) : "データなし"}</strong><small>{fit ? "近似95%範囲：" + formatComparisonDrift(fit.intervalLow) + " ～ " + formatComparisonDrift(fit.intervalHigh) : ""}</small></article>)}</div><h3>刺激間隔の絶対値で比較</h3><p className="intervalDdmLead">前後の刺激時間の差 <b>ΔT</b> ごとに、同じDDMを適合します。</p><div className="absoluteDdmGrid">{intervalFits.map(({ interval, count, fit }) => <article key={interval}><span>ΔT = {interval / 1000}秒</span><b>{fit ? formatComparisonDrift(fit.drift) : "—"}</b><strong>{fit ? "|v| = " + fit.evidenceStrength.toFixed(2) : "データなし"}</strong><small>{count} 比較 {fit ? "／ 近似95%範囲：" + formatComparisonDrift(fit.intervalLow) + " ～ " + formatComparisonDrift(fit.intervalHigh) : ""}</small></article>)}</div><p className="fitReadout">絶対値ごとの比較は条件あたり8〜24比較であり、個人の結果は探索的です。複数参加者のCSVを同じ条件内でまとめると、比率と絶対差のどちらが説明しやすいかをより安定して調べられます。</p></div>
         <details><summary>試行ごとのデータを見る</summary><div className="tableWrap"><table><thead><tr><th>比較</th><th>前</th><th>今回</th><th>比率</th><th>回答</th><th>結果</th><th>RT</th></tr></thead><tbody>{trials.map(trial => <tr key={trial.block + "-" + trial.index}><td>{trial.index}</td><td>{trial.previousDuration / 1000}s</td><td>{trial.currentDuration / 1000}s</td><td>{trial.ratio}倍</td><td>{trial.response ?? "—"}</td><td className={trial.outcome === "correct" ? "good" : "bad"}>{trial.outcome}</td><td>{trial.rtFromOffset === null ? "—" : trial.rtFromOffset + " ms"}</td></tr>)}</tbody></table></div></details>
         <div className="resultActions"><a className="secondary" href={HOME_HREF}>課題選択へ戻る</a><button className="secondary" onClick={exportCsv}>CSVを保存</button><button className="start" onClick={reset}>もう一度挑戦 <span>↻</span></button></div>
       </section>}
